@@ -11,6 +11,8 @@ import base64
 import hmac
 import hashlib
 import threading
+import secrets
+import datetime
 import urllib.request
 import urllib.parse
 from http.server import SimpleHTTPRequestHandler, HTTPServer
@@ -20,16 +22,18 @@ from concurrent.futures import ThreadPoolExecutor
 PORT = int(os.environ.get("PORT", 3000))
 SECRET_KEY = base64.b64decode("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==").decode("utf-8")
 BASE_URL = "https://api3.aoneroom.com"
+ADMIN_EMAIL = "canwingamers@gmail.com"
+API_KEYS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_keys.json")
 
 ADULT_REGEX = r"(?i)\b(porn|porno|xxx|erotic|erotica|hentai|nsfw|nudity|onlyfans|softcore|hardcore|fetish|ullu|kooku|primeplay|hotshots|besharams|voovi|moodx|jav|playboy|lust\s*stories|rabbit\s*movies|hunters\s*app|chikooflix|redprime|sexy\s*scenes)\b"
 
 def is_adult(title, genre=None, desc=None):
     import re
-    if title and re.search(ADULT_REGEX, title):
+    if title and re.search(ADULT_REGEX, str(title)):
         return True
-    if genre and re.search(ADULT_REGEX, genre):
+    if genre and re.search(ADULT_REGEX, str(genre)):
         return True
-    if desc and re.search(ADULT_REGEX, desc):
+    if desc and re.search(ADULT_REGEX, str(desc)):
         return True
     return False
 
@@ -57,8 +61,109 @@ def generate_signature(method, accept, content_type, url, body="", timestamp=Non
     mac = hmac.new(base64.b64decode(SECRET_KEY), canonical.encode("utf-8"), hashlib.md5)
     return f"{timestamp}|2|{base64.b64encode(mac.digest()).decode()}"
 
+# Token management
+token_cache = {"token": None, "ts": 0}
+token_lock = threading.Lock()
+
+def get_token(force=False):
+    with token_lock:
+        now = time.time()
+        if not force and token_cache["token"] and (now - token_cache["ts"]) < 3600:
+            return token_cache["token"]
+        u = f"{BASE_URL}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
+        req = urllib.request.Request(u, headers=get_api_headers(u))
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                t = json.loads(resp.headers.get("x-user", "{}")).get("token")
+                if t:
+                    token_cache["token"] = t
+                    token_cache["ts"] = now
+                    return t
+        except Exception as e:
+            print(f"[WARN] Token refresh failed: {e}", flush=True)
+        return token_cache.get("token") or ""
+
+def get_api_headers(url, method="GET", body="", token=None):
+    now = int(time.time() * 1000)
+    ct = "application/json"
+    h = {
+        "user-agent": "com.community.mbox.in/50020126 (Linux; U; Android 14; en_US; Pixel 8; Build/UD1A.230803.041; Cronet/145.0.7582.0)",
+        "accept": "application/json",
+        "content-type": ct,
+        "x-client-token": get_x_client_token(now),
+        "x-tr-signature": generate_signature(method, "application/json", ct, url, body, now),
+        "x-client-info": '{"package_name":"com.community.mbox.in","version_name":"4.0.02.0831.03","version_code":50020126,"os":"android","os_version":"14","install_ch":"official","device_id":"1234567890abcdef1234567890abcdef","install_store":"official","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"Google","model":"Pixel 8","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"America/New_York","sp_code":"","X-Play-Mode":"1","X-Idle-Data":"1","X-Family-Mode":"0","X-Content-Mode":"0"}',
+        "x-client-status": "0"
+    }
+    t = token if token is not None else token_cache.get("token")
+    if t:
+        h["Authorization"] = f"Bearer {t}"
+    return h
+
+def api_request(url, method="GET", body="", timeout=15):
+    token = get_token()
+    headers = get_api_headers(url, method=method, body=body, token=token)
+    data = body.encode("utf-8") if body else None
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 441):
+            token = get_token(force=True)
+            headers = get_api_headers(url, method=method, body=body, token=token)
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        raise
+
+# API Key Management
+api_keys_lock = threading.Lock()
+
+def load_api_keys():
+    with api_keys_lock:
+        if not os.path.exists(API_KEYS_FILE):
+            default_data = {
+                "keys": [{
+                    "id": "key_dev_master_01",
+                    "key": "ayush_live_dev_7f8a9b1c2d3e4f506172",
+                    "name": "Master Developer Key",
+                    "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+                    "status": "active",
+                    "requests_count": 0,
+                    "last_used_at": None
+                }]
+            }
+            with open(API_KEYS_FILE, "w", encoding="utf-8") as f:
+                json.dump(default_data, f, indent=2)
+            return default_data
+        try:
+            with open(API_KEYS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {"keys": []}
+
+def save_api_keys(data):
+    with api_keys_lock:
+        with open(API_KEYS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+
+def track_api_key_usage(key_str):
+    data = load_api_keys()
+    for k in data.get("keys", []):
+        if k.get("key") == key_str:
+            if k.get("status") != "active":
+                return False, "revoked"
+            k["requests_count"] = k.get("requests_count", 0) + 1
+            k["last_used_at"] = datetime.datetime.utcnow().isoformat() + "Z"
+            save_api_keys(data)
+            return True, k
+    return False, "not_found"
+
+# Media & DASH Proxies
 dash_sessions = {}
 streams_cache = {}
+home_cache = {}
 
 def register_dash_session(resolved_url, cookie):
     base_dash_url = resolved_url.rsplit('/', 1)[0]
@@ -87,66 +192,126 @@ def rewrite_manifest_codecs(manifest_text):
         return tag
     return re.sub(r'<Representation[^>]+>', fix_rep, manifest_text)
 
-def get_api_headers(url, method="GET", body="", token=None):
-    now = int(time.time() * 1000)
-    ct = "application/json"
-    h = {
-        "user-agent": "com.community.mbox.in/50020126 (Linux; U; Android 14; en_US; Pixel 8; Build/UD1A.230803.041; Cronet/145.0.7582.0)",
-        "accept": "application/json",
-        "content-type": ct,
-        "x-client-token": get_x_client_token(now),
-        "x-tr-signature": generate_signature(method, "application/json", ct, url, body, now),
-        "x-client-info": '{"package_name":"com.community.mbox.in","version_name":"4.0.02.0831.03","version_code":50020126,"os":"android","os_version":"14","install_ch":"official","device_id":"1234567890abcdef1234567890abcdef","install_store":"official","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"Google","model":"Pixel 8","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"America/New_York","sp_code":"","X-Play-Mode":"1","X-Idle-Data":"1","X-Family-Mode":"0","X-Content-Mode":"0"}',
-        "x-client-status": "0"
-    }
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return h
-
-token_cache = {"token": None, "ts": 0}
-def get_token(force=False):
-    now = time.time()
-    if not force and token_cache["token"] and (now - token_cache["ts"]) < 3600:
-        return token_cache["token"]
-    u = f"{BASE_URL}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
-    req = urllib.request.Request(u, headers=get_api_headers(u))
+def fetch_category_items(cat_spec, cat_title):
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            t = json.loads(resp.headers.get("x-user", "{}")).get("token")
-            if t:
-                token_cache["token"] = t
-                token_cache["ts"] = now
-                return t
+        if isinstance(cat_spec, dict):
+            u = f"{BASE_URL}/wefeed-mobile-bff/subject-api/list"
+            body_dict = {"page": 1, "perPage": 16, "sort": "ForYou"}
+            body_dict.update(cat_spec)
+            resp = api_request(u, method="POST", body=json.dumps(body_dict), timeout=10)
+        else:
+            u = f"{BASE_URL}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType={cat_spec}&page=1&perPage=16"
+            resp = api_request(u, timeout=10)
+
+        raw_items = resp.get("data", {}).get("items", []) or resp.get("data", {}).get("subjects", [])
+        clean_items = []
+        for it in raw_items:
+            title = it.get("title", "")
+            genre = str(it.get("genre", ""))
+            desc = str(it.get("description", ""))
+            stype = it.get("subjectType", 1)
+            display_title = title.split("[")[0].strip()
+            if not display_title or stype not in (1, 2, 7) or is_adult(title, genre, desc):
+                continue
+            cover_obj = it.get("cover") or {}
+            poster = cover_obj.get("url")
+            if not poster:
+                continue
+            clean_items.append({
+                "id": str(it.get("subjectId")),
+                "title": display_title,
+                "rawTitle": title,
+                "poster": poster,
+                "rating": str(it.get("imdbRatingValue") or "7.5"),
+                "type": "series" if stype in (2, 7) else "movie",
+                "genre": genre,
+                "desc": desc,
+                "year": (str(it.get("releaseDate") or "2026"))[:4]
+            })
+        if clean_items:
+            return (cat_title, clean_items)
     except Exception as e:
-        print(f"[ERROR] Failed to get token: {e}", flush=True)
-    return token_cache.get("token")
+        print(f"[WARN] Category {cat_title} error: {e}", flush=True)
+    return (cat_title, [])
 
-def api_request(url, method="GET", body="", timeout=15):
-    token = get_token()
-    headers = get_api_headers(url, method=method, body=body, token=token)
-    data = body.encode("utf-8") if body else None
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 441):
-            token = get_token(force=True)
-            headers = get_api_headers(url, method=method, body=body, token=token)
-            req = urllib.request.Request(url, data=data, headers=headers, method=method)
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        raise
+def build_home_feed(tab="all"):
+    get_token()
+    if tab == "movies":
+        CATEGORIES = [
+            ("4516404531735022304", "🔥 Trending Movies"),
+            ("414907768299210008", "🌟 Bollywood Blockbusters"),
+            ("3859721901924910512", "💥 South Indian (Hindi Dub)"),
+            ({"channelId": "1", "classify": "Hindi dub", "country": "United States"}, "🎬 Hollywood in Hindi"),
+            ("8019599703232971616", "🌍 Hollywood Hits"),
+            ({"channelId": "1", "genre": "Action"}, "⚡ Action Hits"),
+            ({"channelId": "1", "genre": "Comedy"}, "😂 Comedy Hits"),
+        ]
+    elif tab == "series":
+        CATEGORIES = [
+            ({"channelId": "2", "country": "India"}, "📺 Top Indian Web Series"),
+            ("4741626294545400336", "🔥 Global Trending Series"),
+            ({"channelId": "2", "classify": "Hindi dub", "country": "United States"}, "🎬 Hollywood Series in Hindi"),
+            ("7878715743607948784", "🇰🇷 Korean Drama"),
+            ("8788126208987989488", "🇨🇳 Chinese Drama"),
+        ]
+    elif tab == "anime":
+        CATEGORIES = [
+            ("8434602210994128512", "🎌 Anime Universe"),
+        ]
+    else:
+        CATEGORIES = [
+            ("4516404531735022304", "🔥 Trending in India"),
+            ("414907768299210008", "🌟 Bollywood Blockbusters"),
+            ("3859721901924910512", "💥 South Indian (Hindi Dub)"),
+            ({"channelId": "2", "country": "India"}, "📺 Top Indian Web Series"),
+            ({"channelId": "1", "classify": "Hindi dub", "country": "United States"}, "🎬 Hollywood in Hindi"),
+            ("8019599703232971616", "🌍 Hollywood Blockbusters"),
+            ("4741626294545400336", "📺 Top Series This Week"),
+            ({"channelId": "1", "genre": "Action"}, "⚡ Action Movies"),
+            ("8434602210994128512", "🎌 Anime Universe"),
+            ("7878715743607948784", "🇰🇷 Korean Drama"),
+        ]
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(fetch_category_items, cid, ctitle) for cid, ctitle in CATEGORIES]
+        results = [f.result() for f in futures]
+
+    result_rows = []
+    hero_item = None
+    results_dict = dict(results)
+    for cid, ctitle in CATEGORIES:
+        items = results_dict.get(ctitle, [])
+        if items:
+            result_rows.append({"title": ctitle, "items": items})
+            if not hero_item:
+                for it in items:
+                    if len(it.get("desc", "")) > 25:
+                        hero_item = it
+                        break
+
+    if not hero_item and result_rows and result_rows[0]["items"]:
+        hero_item = result_rows[0]["items"][0]
+
+    feed_data = {
+        "status": "success",
+        "tab": tab,
+        "hero": hero_item,
+        "rows": result_rows
+    }
+    home_cache[tab] = {"data": feed_data, "ts": time.time()}
+    return feed_data
+
 
 class MultiCyberServer(SimpleHTTPRequestHandler):
+
     def end_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Admin-Email, Range, User-Agent, X-Ayush-Internal")
         super().end_headers()
 
     def do_OPTIONS(self):
-        self.send_response(200)
+        self.send_response(204)
         self.end_headers()
 
     def send_json(self, data, status=200):
@@ -171,6 +336,50 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def check_api_key_auth(self, qs):
+        # 1. Allow internal requests from the web player or admin UI
+        ref = self.headers.get("Referer", "")
+        origin = self.headers.get("Origin", "")
+        internal_hdr = self.headers.get("X-Ayush-Internal", "")
+        if internal_hdr == "1" or "localhost" in ref or "ayush.ai.studio" in ref or "localhost" in origin or "ayush.ai.studio" in origin:
+            return True, {"name": "Internal Client", "status": "active"}
+
+        # 2. Extract key from header or query param
+        api_key = self.headers.get("X-API-Key") or qs.get("api_key", [""])[0] or qs.get("key", [""])[0]
+        if not api_key:
+            return False, "missing"
+
+        ok, result = track_api_key_usage(api_key.strip())
+        if ok:
+            return True, result
+        return False, result
+
+    def check_admin_auth(self, body_json=None):
+        auth_hdr = self.headers.get("Authorization", "")
+        admin_email_hdr = self.headers.get("X-Admin-Email", "").lower()
+        if admin_email_hdr == ADMIN_EMAIL.lower():
+            return True
+
+        if auth_hdr.startswith("Bearer "):
+            token = auth_hdr.split(" ", 1)[1]
+            try:
+                parts = token.split(".")
+                if len(parts) >= 2:
+                    pad = len(parts[1]) % 4
+                    p_b64 = parts[1] + ("=" * (4 - pad) if pad else "")
+                    payload = json.loads(base64.urlsafe_b64decode(p_b64).decode("utf-8", errors="replace"))
+                    email = (payload.get("email") or "").lower()
+                    if email == ADMIN_EMAIL.lower():
+                        return True
+            except Exception:
+                pass
+
+        if body_json and isinstance(body_json, dict):
+            if body_json.get("admin_email", "").lower() == ADMIN_EMAIL.lower():
+                return True
+
+        return False
+
     def do_GET(self):
         host = self.headers.get("Host", "").lower().split(":")[0]
         parsed = urllib.parse.urlparse(self.path)
@@ -178,39 +387,44 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         qs = urllib.parse.parse_qs(parsed.query)
 
         # ----------------------------------------------------------------------
-        # 1. Host-Based Routing (Subdomains)
+        # 1. Host-Based Subdomain Routing
         # ----------------------------------------------------------------------
-        # If user visits music.ayush.ai.studio -> serve music.html on root
+        if host.startswith("flix."):
+            if path in ["", "/", "/watch", "/play"] or path.startswith("/watch/"):
+                return self.serve_static_file("static/watch.html")
+            if path in ["/info", "/info/"]:
+                return self.serve_static_file("static/flix.html")
+
         if host.startswith("music.") and path in ["", "/"]:
             return self.serve_static_file("static/music.html")
 
-        # If user visits flix.ayush.ai.studio -> serve flix.html on root
-        if host.startswith("flix.") and path in ["", "/"]:
-            return self.serve_static_file("static/flix.html")
-
-        # If user visits api.ayush.ai.studio -> serve api.html on root
         if host.startswith("api.") and path in ["", "/"]:
             return self.serve_static_file("static/api.html")
 
         # ----------------------------------------------------------------------
-        # 2. Path-Based Navigation (Works everywhere)
+        # 2. Path-Based Navigation
         # ----------------------------------------------------------------------
         if path in ["", "/"]:
             return self.serve_static_file("static/portfolio.html")
 
-        if path in ["/music", "/music/"]:
-            return self.serve_static_file("static/music.html")
+        if path in ["/admin", "/admin/"]:
+            return self.serve_static_file("static/admin.html")
 
-        if path in ["/flix", "/flix/"]:
+        if path in ["/flix", "/flix/", "/watch", "/watch/"]:
+            return self.serve_static_file("static/watch.html")
+
+        if path in ["/info", "/info/"]:
             return self.serve_static_file("static/flix.html")
 
-        if path in ["/watch", "/watch/"]:
-            return self.serve_static_file("static/watch.html")
+        if path in ["/music", "/music/"]:
+            return self.serve_static_file("static/music.html")
 
         if path in ["/api", "/api/"]:
             return self.serve_static_file("static/api.html")
 
-        # Static assets
+        # ----------------------------------------------------------------------
+        # 3. Static Files
+        # ----------------------------------------------------------------------
         if path.startswith("/static/"):
             rel = path.lstrip("/")
             ct = "text/plain"
@@ -220,6 +434,7 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
             elif rel.endswith(".wgt") or rel.endswith(".apk") or rel.endswith(".zip"): ct = "application/octet-stream"
             elif rel.endswith(".svg"): ct = "image/svg+xml"
             elif rel.endswith(".png"): ct = "image/png"
+            elif rel.endswith(".jpg") or rel.endswith(".jpeg"): ct = "image/jpeg"
             return self.serve_static_file(rel, ct)
 
         if path.startswith("/lib/"):
@@ -228,36 +443,160 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
             return self.serve_static_file(rel, ct)
 
         # ----------------------------------------------------------------------
-        # 3. Streaming & DASH Media Proxy Engine
+        # 4. Admin API Endpoints
+        # ----------------------------------------------------------------------
+        if path == "/api/admin/keys":
+            if not self.check_admin_auth():
+                self.send_json({"status": "error", "message": "Admin authorization required (canwingamers@gmail.com)"}, status=403)
+                return
+            keys_data = load_api_keys()
+            total_reqs = sum(k.get("requests_count", 0) for k in keys_data.get("keys", []))
+            active_cnt = sum(1 for k in keys_data.get("keys", []) if k.get("status") == "active")
+            return self.send_json({
+                "status": "success",
+                "keys": keys_data.get("keys", []),
+                "stats": {
+                    "total_keys": len(keys_data.get("keys", [])),
+                    "active_keys": active_cnt,
+                    "total_requests": total_reqs
+                }
+            })
+
+        # ----------------------------------------------------------------------
+        # 5. Media Proxies (DASH & Chunks)
         # ----------------------------------------------------------------------
         if path.startswith("/stream/dash/"):
             return self.handle_dash_proxy(path)
 
-        if path.startswith("/stream/proxy/"):
+        if path.startswith("/stream/proxy/") or path == "/stream":
             video_url = qs.get("url", [""])[0]
             cookie = qs.get("cookie", [""])[0]
             return self.handle_stream_proxy(video_url, cookie)
 
         # ----------------------------------------------------------------------
-        # 4. JSON REST API Endpoints
+        # 6. JSON REST API Endpoints (Protected by API Key for external calls)
         # ----------------------------------------------------------------------
-        if path == "/api/search":
-            q = qs.get("q", [""])[0]
-            return self.handle_api_search(q)
+        if path.startswith("/api/"):
+            if not path.startswith("/api/admin/"):
+                is_auth, key_info = self.check_api_key_auth(qs)
+                if not is_auth:
+                    msg = "Missing API key. Provide via 'X-API-Key' header or '?api_key=' parameter." if key_info == "missing" else "API key is revoked or invalid."
+                    self.send_json({
+                        "status": "error",
+                        "code": 401,
+                        "error": "Unauthorized",
+                        "message": f"{msg} Manage keys at http://admin.ayush.ai.studio"
+                    }, status=401)
+                    return
 
-        if path == "/api/streams":
-            sid = qs.get("id", [""])[0]
-            se = int(qs.get("se", [0])[0])
-            ep = int(qs.get("ep", [0])[0])
-            return self.handle_api_streams(sid, se, ep)
+            if path == "/api/home":
+                tab = qs.get("tab", ["all"])[0]
+                return self.handle_api_home(tab)
 
-        if path == "/api/home":
-            return self.handle_api_home()
+            if path == "/api/search":
+                q = qs.get("q", [""])[0]
+                return self.handle_api_search(q)
 
-        # Fallback to standard handler
+            if path == "/api/resolve":
+                slug = qs.get("slug", [""])[0] or qs.get("q", [""])[0]
+                return self.handle_api_resolve(slug)
+
+            if path == "/api/details":
+                sid = qs.get("id", [""])[0]
+                return self.handle_api_details(sid)
+
+            if path == "/api/tmdb":
+                t_path = qs.get("path", [""])[0]
+                return self.handle_api_tmdb(t_path)
+
+            if path == "/api/streams":
+                sid = qs.get("id", [""])[0]
+                se = int(qs.get("se", [0])[0])
+                ep = int(qs.get("ep", [0])[0])
+                return self.handle_api_streams(sid, se, ep)
+
+        # SPA Fallback for /watch/* deep links
+        if path.startswith("/watch/"):
+            return self.serve_static_file("static/watch.html")
+
         return super().do_GET()
 
+    def do_POST(self):
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        length = int(self.headers.get("Content-Length", 0))
+        body_bytes = self.rfile.read(length) if length > 0 else b""
+        body_json = {}
+        try:
+            if body_bytes:
+                body_json = json.loads(body_bytes.decode("utf-8"))
+        except Exception:
+            pass
+
+        # Admin Actions
+        if path.startswith("/api/admin/"):
+            if not self.check_admin_auth(body_json):
+                self.send_json({"status": "error", "message": "Admin authorization required (canwingamers@gmail.com)"}, status=403)
+                return
+
+            if path == "/api/admin/keys/create":
+                name = body_json.get("name", "New API Key").strip() or "Unnamed Key"
+                data = load_api_keys()
+                new_key = {
+                    "id": f"key_{secrets.token_hex(6)}",
+                    "key": f"ayush_live_{secrets.token_hex(16)}",
+                    "name": name,
+                    "created_at": datetime.datetime.utcnow().isoformat() + "Z",
+                    "status": "active",
+                    "requests_count": 0,
+                    "last_used_at": None
+                }
+                data.setdefault("keys", []).append(new_key)
+                save_api_keys(data)
+                self.send_json({"status": "success", "key": new_key})
+                return
+
+            if path == "/api/admin/keys/toggle":
+                key_id = body_json.get("id")
+                new_status = body_json.get("status", "revoked")
+                data = load_api_keys()
+                updated = False
+                for k in data.get("keys", []):
+                    if k.get("id") == key_id:
+                        k["status"] = new_status
+                        updated = True
+                        break
+                if updated:
+                    save_api_keys(data)
+                    self.send_json({"status": "success", "message": f"Key status changed to {new_status}"})
+                else:
+                    self.send_json({"status": "error", "message": "Key not found"}, status=404)
+                return
+
+            if path == "/api/admin/keys/delete":
+                key_id = body_json.get("id")
+                data = load_api_keys()
+                before_len = len(data.get("keys", []))
+                data["keys"] = [k for k in data.get("keys", []) if k.get("id") != key_id]
+                if len(data["keys"]) < before_len:
+                    save_api_keys(data)
+                    self.send_json({"status": "success", "message": "Key deleted successfully"})
+                else:
+                    self.send_json({"status": "error", "message": "Key not found"}, status=404)
+                return
+
+        self.send_json({"status": "error", "message": "Endpoint not found"}, status=404)
+
     # --- API HANDLERS ---
+    def handle_api_home(self, tab="all"):
+        now = time.time()
+        cached = home_cache.get(tab)
+        if cached and (now - cached["ts"]) < 1800:
+            self.send_json(cached["data"])
+            return
+        feed = build_home_feed(tab)
+        self.send_json(feed)
+
     def handle_api_search(self, query):
         if not query:
             self.send_json({"status": "success", "results": []})
@@ -286,16 +625,144 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
                         "title": display_title,
                         "rawTitle": title,
                         "poster": poster,
-                        "rating": sub.get("imdbRatingValue") or "7.5",
+                        "rating": str(sub.get("imdbRatingValue") or "7.5"),
                         "type": "series" if stype in (2, 7) else "movie",
                         "genre": genre,
                         "desc": desc,
-                        "year": (sub.get("releaseDate") or "2026")[:4]
+                        "year": (str(sub.get("releaseDate") or "2026"))[:4]
                     })
             self.send_json({"status": "success", "results": clean_results})
         except Exception as e:
             print(f"[ERROR] Search failed for '{query}': {e}", flush=True)
             self.send_json({"status": "error", "message": str(e)}, status=500)
+
+    def handle_api_resolve(self, slug):
+        if not slug:
+            self.send_json({"status": "error", "message": "Missing slug"}, status=400)
+            return
+        keyword = slug.replace("-", " ").replace("_", " ").strip()
+        try:
+            u = f"{BASE_URL}/wefeed-mobile-bff/subject-api/search/v2"
+            body = json.dumps({"page": 1, "perPage": 5, "keyword": keyword})
+            resp = api_request(u, method="POST", body=body)
+            results = resp.get("data", {}).get("results", [])
+            match_sub = None
+            for grp in results:
+                for sub in grp.get("subjects", []):
+                    title = sub.get("title", "")
+                    genre = str(sub.get("genre", ""))
+                    desc = str(sub.get("description", ""))
+                    stype = sub.get("subjectType", 1)
+                    display_title = title.split("[")[0].strip()
+                    if not display_title or stype not in (1, 2, 7) or is_adult(title, genre, desc):
+                        continue
+                    match_sub = sub
+                    break
+                if match_sub:
+                    break
+
+            if not match_sub:
+                self.send_json({"status": "error", "message": "Content not found"}, status=404)
+                return
+
+            sid = str(match_sub.get("subjectId"))
+            self.handle_api_details(sid)
+        except Exception as e:
+            self.send_json({"status": "error", "message": str(e)}, status=500)
+
+    def handle_api_details(self, sid):
+        if not sid:
+            self.send_json({"status": "error", "message": "Missing ID"}, status=400)
+            return
+        try:
+            u = f"{BASE_URL}/wefeed-mobile-bff/subject-api/get?subjectId={sid}"
+            resp = api_request(u)
+            data = resp.get("data", {})
+            title = data.get("title", "")
+            display_title = title.split("[")[0].strip()
+            genre = str(data.get("genre", ""))
+            desc = str(data.get("description", ""))
+            stype = data.get("subjectType", 1)
+            is_series = stype in (2, 7)
+            cover_obj = data.get("cover") or {}
+            poster = cover_obj.get("url")
+
+            actors = []
+            for staff in data.get("staffList", []):
+                if staff.get("staffType") == 1:
+                    actors.append({
+                        "name": staff.get("name"),
+                        "character": staff.get("character")
+                    })
+
+            dubs = []
+            for d in data.get("dubs", []):
+                dubs.append({
+                    "id": str(d.get("subjectId")),
+                    "name": d.get("lanName") or "Alternative"
+                })
+
+            seasons_info = []
+            if is_series:
+                try:
+                    se_url = f"{BASE_URL}/wefeed-mobile-bff/subject-api/season-info?subjectId={sid}"
+                    se_resp = api_request(se_url)
+                    raw_seasons = se_resp.get("data", {}).get("seasons", [])
+                    for sn in raw_seasons:
+                        s_num = sn.get("se", 1)
+                        max_ep = sn.get("maxEp", 1)
+                        seasons_info.append({
+                            "season": s_num,
+                            "maxEp": max_ep,
+                            "episodes": list(range(1, max_ep + 1))
+                        })
+                except Exception as ex:
+                    print(f"[WARN] Season-info failed for {sid}: {ex}", flush=True)
+
+            details = {
+                "id": str(sid),
+                "title": display_title,
+                "rawTitle": title,
+                "poster": poster,
+                "backdrop": poster,
+                "rating": str(data.get("imdbRatingValue") or "7.8"),
+                "year": (str(data.get("releaseDate") or "2026"))[:4],
+                "duration": data.get("duration") or ("Series" if is_series else "2h"),
+                "genre": genre,
+                "desc": desc,
+                "actors": actors[:6],
+                "dubs": dubs,
+                "isSeries": is_series,
+                "seasons": seasons_info
+            }
+            self.send_json({"status": "success", "details": details})
+        except Exception as e:
+            print(f"[ERROR] Details failed for {sid}: {e}", flush=True)
+            self.send_json({"status": "error", "message": str(e)}, status=500)
+
+    def handle_api_tmdb(self, tmdb_path):
+        if not tmdb_path:
+            self.send_json({"error": "Missing path parameter"}, status=400)
+            return
+        api_keys = [
+            "6cffbd2afef40abe5ce96016e1c81548",
+            "c23e85e267104b90be8bf97775586616",
+            "3da1f6e39ec2f73d6103a8312d37d145",
+            "b3bc22ae6b28399e5df80f33b1e3557e"
+        ]
+        for key in api_keys:
+            sep = "&" if "?" in tmdb_path else "?"
+            url = f"https://api.themoviedb.org/3/{tmdb_path}{sep}api_key={key}"
+            try:
+                req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": "Ayushflix/1.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        self.send_json(data)
+                        return
+            except Exception:
+                continue
+        self.send_json({"error": "TMDB proxy request failed"}, status=502)
 
     def handle_api_streams(self, sid, se=0, ep=0):
         if not sid:
@@ -309,16 +776,16 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
             return
 
         try:
-            subject_candidates = [(sid, "Original Audio")]
+            subject_candidates = [(str(sid), "Original Audio")]
             seen_cand_ids = {str(sid)}
             try:
                 det_url = f"{BASE_URL}/wefeed-mobile-bff/subject-api/get?subjectId={sid}"
                 det_res = api_request(det_url)
                 for d in det_res.get("data", {}).get("dubs", []):
-                    did = d.get("subjectId")
+                    did = str(d.get("subjectId"))
                     dname = (d.get("name") or d.get("lanName") or "Dub").strip()
-                    if did and str(did) not in seen_cand_ids:
-                        seen_cand_ids.add(str(did))
+                    if did and did not in seen_cand_ids:
+                        seen_cand_ids.add(did)
                         subject_candidates.append((did, dname))
             except Exception as e:
                 print(f"[WARN] Dubs fetch failed for {sid}: {e}", flush=True)
@@ -341,7 +808,6 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
                         raw_url = st.get("url", "")
                         fmt = (st.get("format") or "MP4").upper()
                         res = st.get("resolutions") or "HD"
-                        
                         resolved_url = raw_url
                         if ".mpd" in resolved_url.lower():
                             sess_id = register_dash_session(resolved_url, cookie)
@@ -372,15 +838,6 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"[ERROR] Streams failed for {sid}: {e}", flush=True)
             self.send_json({"status": "error", "message": str(e)}, status=500)
-
-    def handle_api_home(self):
-        try:
-            url = f"{BASE_URL}/wefeed-mobile-bff/subject-api/search/v2"
-            body = json.dumps({"page": 1, "perPage": 20, "keyword": "avengers"})
-            resp = api_request(url, method="POST", body=body)
-            self.send_json({"status": "success", "data": resp.get("data", {})})
-        except Exception as e:
-            self.send_json({"status": "error", "message": str(e)}, 500)
 
     def handle_dash_proxy(self, path):
         parts = path.strip("/").split("/")
@@ -436,7 +893,7 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
                     if not chunk: break
                     try: self.wfile.write(chunk)
                     except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError): break
-        except Exception as e:
+        except Exception:
             try: self.send_response(502); self.end_headers()
             except Exception: pass
 
@@ -480,11 +937,12 @@ def run():
     httpd = ThreadedHTTPServer(server_address, MultiCyberServer)
     print(f"===========================================================", flush=True)
     print(f"  AYUSH CYBERNETIC MULTI-SERVICE PLATFORM ONLINE", flush=True)
-    print(f"  Local Port: {PORT}", flush=True)
-    print(f"  - Portfolio:  http://localhost:{PORT}/  (ayush.ai.studio)", flush=True)
-    print(f"  - AyushMuzic: http://localhost:{PORT}/music (music.ayush.ai.studio)", flush=True)
-    print(f"  - Ayushflix:  http://localhost:{PORT}/flix  (flix.ayush.ai.studio)", flush=True)
-    print(f"  - Stream API: http://localhost:{PORT}/api   (api.ayush.ai.studio)", flush=True)
+    print(f"  Port: {PORT}", flush=True)
+    print(f"  - Portfolio:  http://localhost:{PORT}/      (ayush.ai.studio)", flush=True)
+    print(f"  - Ayushflix:  http://localhost:{PORT}/watch  (flix.ayush.ai.studio)", flush=True)
+    print(f"  - AyushMuzic: http://localhost:{PORT}/music  (music.ayush.ai.studio)", flush=True)
+    print(f"  - Stream API: http://localhost:{PORT}/api    (api.ayush.ai.studio)", flush=True)
+    print(f"  - Admin Hub:  http://localhost:{PORT}/admin  (Secret Admin Panel)", flush=True)
     print(f"===========================================================", flush=True)
     try:
         httpd.serve_forever()

@@ -1358,6 +1358,11 @@
           Continue with Google
         </button>
 
+        <button id="skip-auth-btn" type="button" class="w-full mt-3 py-3.5 bg-[rgba(255,255,255,0.06)] hover:bg-[rgba(255,255,255,0.12)] border border-[var(--border)] text-gray-200 font-semibold rounded-2xl transition-all flex items-center justify-center gap-2">
+          <i data-feather="arrow-right-circle" class="w-5 h-5 text-[var(--gold)]"></i>
+          <span>Skip &amp; Browse as Guest</span>
+        </button>
+
         <p class="mt-8 text-center text-sm text-[var(--muted)]">
           <span id="auth-toggle-text">Don't have an account? </span>
           <button id="auth-toggle-btn" class="text-[var(--gold)] hover:underline font-semibold transition-all">Sign up</button>
@@ -4030,6 +4035,22 @@
         errorDiv.style.display = 'block';
       }
     });
+
+    const skipAuthBtn = document.getElementById('skip-auth-btn');
+    if (skipAuthBtn) {
+      skipAuthBtn.addEventListener('click', () => {
+        currentUser = null;
+        currentProfile = {
+          id: 'guest',
+          name: 'Guest Explorer',
+          avatar: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
+          isKids: false
+        };
+        window.currentUser = currentUser;
+        window.currentProfile = currentProfile;
+        enterApp();
+      });
+    }
 
     const handleSignOutAction = () => {
       if (profileMenu) profileMenu.classList.add('hidden');
