@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AYUSH STREAMING API // Interactive Cyberpunk Console</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/css/cyberpunk.css" />
+  <script src="https://unpkg.com/feather-icons"></script>
+</head>
+<body>
+  <div class="cyber-grid"></div>
+  <canvas id="matrix-canvas" class="fixed inset-0 pointer-events-none z-0 opacity-25"></canvas>
+  <div class="scanlines"></div>
+
+  <!-- Cyberpunk Sticky HUD Switcher -->
+  <header class="hud-nav">
+    <div class="hud-brand glow-green">
+      <span class="text-[var(--neon-green)]">&lt;API</span><span class="text-white">.AYUSH.AI.STUDIO/&gt;</span>
+    </div>
+    <nav class="hud-links">
+      <a href="/" class="hud-link">01 // PORTFOLIO</a>
+      <a href="/music" class="hud-link active-purple">02 // AYUSH MUZIC</a>
+      <a href="/flix" class="hud-link active-magenta">03 // AYUSHFLIX</a>
+      <a href="/api" class="hud-link active-green">04 // STREAMING API</a>
+    </nav>
+  </header>
+
+  <main class="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 py-10 space-y-12">
+
+    <div class="cyber-box p-6 sm:p-8 border-[var(--neon-green)]">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 class="text-3xl font-extrabold font-hud text-white glow-green">STREAMING REST API CONSOLE</h1>
+          <p class="text-xs font-mono text-gray-400 mt-1">High-performance reverse-engineered MovieBox streaming endpoints with real-time signature generation.</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="px-3 py-1 bg-[rgba(0,255,102,0.15)] border border-[var(--neon-green)] rounded font-mono text-xs font-bold text-[var(--neon-green)]">
+            STATUS: 200 OK
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Interactive Tester -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- Endpoint List -->
+      <div class="lg:col-span-5 space-y-4">
+        <h2 class="text-base font-bold font-hud text-white flex items-center gap-2">
+          <span class="text-[var(--neon-cyan)]">&gt;</span> SELECT ENDPOINT
+        </h2>
+
+        <!-- Search Endpoint -->
+        <div onclick="setTest('/api/search?q=deadpool')" class="cyber-box p-4 cursor-pointer hover:border-[var(--neon-cyan)] transition-all">
+          <div class="flex items-center justify-between mb-1">
+            <span class="px-2 py-0.5 bg-cyan-900/60 text-[var(--neon-cyan)] rounded text-[11px] font-bold font-mono">GET</span>
+            <span class="text-xs font-mono text-gray-400">/api/search</span>
+          </div>
+          <p class="text-xs text-gray-300 font-mono">Search catalog by keyword or title (returns verified IDs & posters).</p>
+        </div>
+
+        <!-- Streams Endpoint -->
+        <div onclick="setTest('/api/streams?id=4191963760367656968')" class="cyber-box p-4 cursor-pointer hover:border-[var(--neon-cyan)] transition-all">
+          <div class="flex items-center justify-between mb-1">
+            <span class="px-2 py-0.5 bg-green-900/60 text-[var(--neon-green)] rounded text-[11px] font-bold font-mono">GET</span>
+            <span class="text-xs font-mono text-gray-400">/api/streams</span>
+          </div>
+          <p class="text-xs text-gray-300 font-mono">Extract all audio dubs (Hindi, Original, etc.) & DASH qualities.</p>
+        </div>
+
+        <!-- Home Feed Endpoint -->
+        <div onclick="setTest('/api/home')" class="cyber-box p-4 cursor-pointer hover:border-[var(--neon-cyan)] transition-all">
+          <div class="flex items-center justify-between mb-1">
+            <span class="px-2 py-0.5 bg-purple-900/60 text-[var(--neon-purple)] rounded text-[11px] font-bold font-mono">GET</span>
+            <span class="text-xs font-mono text-gray-400">/api/home</span>
+          </div>
+          <p class="text-xs text-gray-300 font-mono">Retrieve curated home feeds, spotlight movies, and trending series.</p>
+        </div>
+      </div>
+
+      <!-- Live Query & Result Viewer -->
+      <div class="lg:col-span-7 space-y-4">
+        <h2 class="text-base font-bold font-hud text-white flex items-center gap-2">
+          <span class="text-[var(--neon-green)]">&gt;</span> TESTER CONSOLE
+        </h2>
+
+        <div class="cyber-box p-4 space-y-4">
+          <div class="flex gap-2">
+            <input id="api-url-input" type="text" value="/api/search?q=deadpool" class="flex-1 bg-black/70 border border-white/20 rounded px-3 py-2 font-mono text-xs text-white outline-none focus:border-[var(--neon-green)]" />
+            <button onclick="executeApiTest()" class="cyber-btn cyber-btn-green py-2 text-xs">
+              <i data-feather="play"></i> EXECUTE
+            </button>
+          </div>
+
+          <div class="terminal-window">
+            <div class="terminal-header">
+              <span class="text-xs font-mono text-gray-400">RESPONSE VIEWER (JSON)</span>
+              <button onclick="copyResponse()" class="text-xs font-mono text-[var(--neon-cyan)] hover:underline">COPY</button>
+            </div>
+            <pre id="api-result-output" class="p-4 text-xs font-mono text-gray-300 h-96 overflow-y-auto custom-scrollbar whitespace-pre-wrap">Click EXECUTE to send live query to backend...</pre>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="relative z-10 border-t border-white/10 py-8 text-center text-xs font-mono text-gray-500">
+    <div>AYUSH REST API &bull; HIGH THROUGHPUT DASH PROXY ENGINE</div>
+  </footer>
+
+  <script src="/static/js/matrix.js"></script>
+  <script>
+    function setTest(url) {
+      document.getElementById('api-url-input').value = url;
+      executeApiTest();
+    }
+
+    async function executeApiTest() {
+      const url = document.getElementById('api-url-input').value;
+      const out = document.getElementById('api-result-output');
+      out.textContent = 'Executing request to ' + url + ' ...';
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        out.textContent = JSON.stringify(data, null, 2);
+      } catch (e) {
+        out.textContent = 'Request failed: ' + e.message;
+      }
+    }
+
+    function copyResponse() {
+      const text = document.getElementById('api-result-output').textContent;
+      navigator.clipboard.writeText(text);
+      alert('JSON copied to clipboard!');
+    }
+
+    feather.replace();
+    executeApiTest();
+  </script>
+</body>
+</html>

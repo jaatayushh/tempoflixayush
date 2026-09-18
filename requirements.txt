@@ -1,0 +1,2 @@
+﻿# Ayush Cybernetic Platform
+# Pure Python 3.8+ (Zero third-party dependencies)

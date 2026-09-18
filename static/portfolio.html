@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AYUSH // Cybernetic Systems Architect & Developer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/css/cyberpunk.css" />
+  <script src="https://unpkg.com/feather-icons"></script>
+</head>
+<body>
+  <div class="cyber-grid"></div>
+  <canvas id="matrix-canvas" class="fixed inset-0 pointer-events-none z-0 opacity-40"></canvas>
+  <div class="scanlines"></div>
+
+  <!-- Cyberpunk Sticky HUD Switcher -->
+  <header class="hud-nav">
+    <div class="hud-brand glow-cyan">
+      <span class="text-[var(--neon-cyan)]">&lt;AYUSH</span><span class="text-white">.AI.STUDIO/&gt;</span>
+    </div>
+    <nav class="hud-links">
+      <a href="/" class="hud-link active">01 // PORTFOLIO</a>
+      <a href="/music" class="hud-link active-purple">02 // AYUSH MUZIC</a>
+      <a href="/flix" class="hud-link active-magenta">03 // AYUSHFLIX</a>
+      <a href="/api" class="hud-link active-green">04 // STREAMING API</a>
+    </nav>
+  </header>
+
+  <main class="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 py-10 space-y-16">
+
+    <!-- Hero Section -->
+    <section class="cyber-box p-6 sm:p-10 border-[var(--neon-cyan)]">
+      <div class="flex flex-col lg:flex-row items-center justify-between gap-8">
+        <div class="space-y-4 max-w-2xl">
+          <div class="inline-flex items-center gap-2 px-3 py-1 bg-[rgba(0,255,102,0.1)] border border-[var(--neon-green)] rounded-full text-xs font-bold text-[var(--neon-green)]">
+            <span class="w-2 h-2 rounded-full bg-[var(--neon-green)] animate-ping"></span>
+            SYSTEM OPERATIONAL // ALL CORES ONLINE
+          </div>
+          <h1 class="text-4xl sm:text-6xl font-extrabold font-hud tracking-wide text-white leading-tight">
+            I AM <span class="text-[var(--neon-cyan)] glitch glow-cyan">AYUSH</span>
+          </h1>
+          <p class="text-lg text-gray-300 font-mono leading-relaxed">
+            Multiplatform Systems Engineer & Streaming Protocol Architect. Specializing in high-performance ad-free media engines, DASH/HLS byte-range streaming, Kotlin Compose, and reverse engineering.
+          </p>
+          <div class="flex flex-wrap gap-4 pt-2">
+            <a href="#terminal-section" class="cyber-btn">
+              <i data-feather="terminal" class="w-4 h-4"></i> LAUNCH TERMINAL
+            </a>
+            <a href="#repos-section" class="cyber-btn cyber-btn-outline">
+              <i data-feather="git-pull-request" class="w-4 h-4"></i> REPO TRACKER
+            </a>
+            <a href="https://github.com/jaatayushh" target="_blank" class="cyber-btn cyber-btn-green">
+              <i data-feather="github" class="w-4 h-4"></i> GITHUB PROFILE
+            </a>
+          </div>
+        </div>
+
+        <!-- Cyber Badge HUD -->
+        <div class="w-full lg:w-72 cyber-box p-6 bg-black/60 border border-[var(--neon-purple)] space-y-4">
+          <div class="text-xs text-[var(--neon-purple)] font-bold tracking-wider uppercase border-b border-white/10 pb-2">
+            OPERATIONAL SPEC
+          </div>
+          <div class="space-y-2 text-xs font-mono">
+            <div class="flex justify-between"><span class="text-gray-400">HANDLE:</span> <span class="text-white font-bold">@jaatayushh</span></div>
+            <div class="flex justify-between"><span class="text-gray-400">DOMAIN:</span> <span class="text-[var(--neon-cyan)]">ayush.ai.studio</span></div>
+            <div class="flex justify-between"><span class="text-gray-400">LOCATION:</span> <span class="text-white">ASIA / IN</span></div>
+            <div class="flex justify-between"><span class="text-gray-400">FOCUS:</span> <span class="text-[var(--neon-green)]">STREAMING ARCH</span></div>
+            <div class="flex justify-between"><span class="text-gray-400">UPTIME:</span> <span class="text-[var(--neon-yellow)]">99.98%</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Hacker CLI Console -->
+    <section id="terminal-section" class="space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold font-hud text-white flex items-center gap-2 glow-green">
+          <span class="text-[var(--neon-green)]">&gt;</span> HACKER_TERMINAL_V2.0
+        </h2>
+        <span class="text-xs font-mono text-gray-400">TYPE 'help' FOR COMMANDS</span>
+      </div>
+
+      <div class="terminal-window shadow-2xl border border-[var(--neon-green)]">
+        <div class="terminal-header bg-[#0b0c14]">
+          <div class="terminal-dots">
+            <span class="terminal-dot dot-red"></span>
+            <span class="terminal-dot dot-yellow"></span>
+            <span class="terminal-dot dot-green"></span>
+          </div>
+          <div class="text-xs font-mono text-gray-400">bash // root@ayush:~</div>
+          <div class="text-xs font-mono text-[var(--neon-green)]">ACTIVE</div>
+        </div>
+        <div id="terminal-cli-output" class="terminal-body h-64 overflow-y-auto custom-scrollbar font-mono text-xs space-y-1">
+          <div class="text-[var(--neon-green)] font-bold">Welcome to AYUSH.AI.STUDIO Cybernetic Console [Version 2.4.0-release]</div>
+          <div class="text-gray-400">Type <span class="text-[var(--neon-cyan)] font-bold">'help'</span> to view available system commands or explore projects.</div>
+          <div class="text-gray-500 text-[11px] mb-2">Connected via encrypted sub-channel to root session.</div>
+        </div>
+        <div class="p-3 bg-[#0a0b12] border-t border-[#1f2338] flex items-center gap-2">
+          <span class="text-[var(--neon-green)] font-bold font-mono">root@ayush:~#</span>
+          <input type="text" id="terminal-cli-input" placeholder="Type a command (e.g. 'help', 'whoami', 'repos', 'flix')..." class="flex-1 bg-transparent border-none outline-none text-white font-mono text-xs placeholder:text-gray-600" autocomplete="off" spellcheck="false" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Live GitHub Repository Tracker -->
+    <section id="repos-section" class="space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-4">
+        <div>
+          <h2 class="text-2xl font-bold font-hud text-white flex items-center gap-2 glow-cyan">
+            <i data-feather="github" class="w-6 h-6 text-[var(--neon-cyan)]"></i> LIVE REPO TRACKER
+          </h2>
+          <p class="text-xs font-mono text-gray-400 mt-1">Real-time synchronization with GitHub API: @jaatayushh</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <span id="repo-count-badge" class="px-3 py-1 bg-white/5 border border-white/10 rounded font-mono text-xs font-bold text-[var(--neon-cyan)]">SYNCING...</span>
+          <span id="total-stars-badge" class="px-3 py-1 bg-white/5 border border-white/10 rounded font-mono text-xs font-bold text-[var(--neon-yellow)]">★ TRACKER</span>
+        </div>
+      </div>
+
+      <!-- Repos Grid -->
+      <div id="github-repos-grid" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="p-8 text-center text-gray-500 font-mono text-sm col-span-2">
+          Initializing telemetry handshake with api.github.com...
+        </div>
+      </div>
+    </section>
+
+    <!-- Tech Stack Matrix -->
+    <section class="cyber-box p-6 sm:p-8 border-white/10">
+      <h2 class="text-xl font-bold font-hud text-white mb-6 flex items-center gap-2">
+        <span class="text-[var(--neon-purple)]">#</span> CORE_TECH_MATRIX
+      </h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs font-mono">
+        <div class="p-4 bg-white/5 border border-white/10 rounded">
+          <div class="text-[var(--neon-cyan)] font-bold text-sm mb-1">KOTLIN</div>
+          <p class="text-gray-400">Compose Multiplatform, Coroutines, Flow, Android/Desktop</p>
+        </div>
+        <div class="p-4 bg-white/5 border border-white/10 rounded">
+          <div class="text-[var(--neon-green)] font-bold text-sm mb-1">PYTHON</div>
+          <p class="text-gray-400">Reverse Engineering, Asyncio, Media Proxying, Sockets</p>
+        </div>
+        <div class="p-4 bg-white/5 border border-white/10 rounded">
+          <div class="text-[var(--neon-magenta)] font-bold text-sm mb-1">STREAMING</div>
+          <p class="text-gray-400">MPEG-DASH, HLS, ISO BMFF, MSE, Multi-Bitrate ladders</p>
+        </div>
+        <div class="p-4 bg-white/5 border border-white/10 rounded">
+          <div class="text-[var(--neon-yellow)] font-bold text-sm mb-1">SMART TV</div>
+          <p class="text-gray-400">Samsung Tizen OS (WGT), Android TV, Spatial Navigation</p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="relative z-10 border-t border-white/10 py-8 text-center text-xs font-mono text-gray-500">
+    <div class="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div>&copy; 2026 AYUSH // JAATAYUSHH. ALL RIGHTS RESERVED.</div>
+      <div class="flex gap-6 text-[var(--neon-cyan)] font-bold">
+        <a href="https://github.com/jaatayushh" target="_blank" class="hover:underline">GITHUB</a>
+        <a href="/music" class="hover:underline">AYUSH MUZIC</a>
+        <a href="/flix" class="hover:underline">AYUSHFLIX</a>
+        <a href="/api" class="hover:underline">REST API</a>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/static/js/matrix.js"></script>
+  <script src="/static/js/terminal.js"></script>
+  <script>feather.replace();</script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AYUSHFLIX // Ad-Free 1080p FHD Streaming Portal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/css/cyberpunk.css" />
+  <script src="https://unpkg.com/feather-icons"></script>
+</head>
+<body>
+  <div class="cyber-grid"></div>
+  <canvas id="matrix-canvas" class="fixed inset-0 pointer-events-none z-0 opacity-30"></canvas>
+  <div class="scanlines"></div>
+
+  <!-- Cyberpunk Sticky HUD Switcher -->
+  <header class="hud-nav">
+    <div class="hud-brand glow-magenta">
+      <span class="text-[var(--neon-magenta)]">&lt;AYUSH</span><span class="text-white">FLIX/&gt;</span>
+    </div>
+    <nav class="hud-links">
+      <a href="/" class="hud-link">01 // PORTFOLIO</a>
+      <a href="/music" class="hud-link active-purple">02 // AYUSH MUZIC</a>
+      <a href="/flix" class="hud-link active-magenta">03 // AYUSHFLIX</a>
+      <a href="/api" class="hud-link active-green">04 // STREAMING API</a>
+    </nav>
+  </header>
+
+  <main class="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 py-10 space-y-16">
+
+    <!-- Hero Section -->
+    <section class="cyber-box p-6 sm:p-10 border-[var(--neon-magenta)]">
+      <div class="flex flex-col lg:flex-row items-center justify-between gap-10">
+        <div class="space-y-5 max-w-xl">
+          <div class="inline-flex items-center gap-2 px-3 py-1 bg-[rgba(255,0,119,0.15)] border border-[var(--neon-magenta)] rounded-full text-xs font-bold text-[var(--neon-magenta)]">
+            <span class="w-2 h-2 rounded-full bg-[var(--neon-magenta)] animate-pulse"></span>
+            MOVIEBOX ENGINE // ZERO ADS // FULL HD 1080P
+          </div>
+          <h1 class="text-4xl sm:text-6xl font-extrabold font-hud tracking-wide text-white leading-tight">
+            AYUSH<span class="text-[var(--neon-magenta)] glow-magenta">FLIX</span>
+          </h1>
+          <p class="text-base text-gray-300 font-mono leading-relaxed">
+            Free & open-source, completely ad-free streaming client for Android, Android TV, Samsung Smart TV (Tizen OS), and Web. Features multi-audio dubs (Hindi, English, etc.), adaptive DASH streaming, and custom user profiles.
+          </p>
+          <div class="flex flex-wrap gap-4 pt-2">
+            <a href="/watch" class="cyber-btn cyber-btn-magenta">
+              <i data-feather="play"></i> LAUNCH WEB PLAYER
+            </a>
+            <a href="#flix-downloads" class="cyber-btn cyber-btn-outline">
+              <i data-feather="download"></i> DOWNLOAD APPS
+            </a>
+            <a href="https://github.com/jaatayushh/ayushflix" target="_blank" class="cyber-btn cyber-btn-green">
+              <i data-feather="github"></i> GITHUB REPO (★ 5)
+            </a>
+          </div>
+        </div>
+
+        <!-- Live Streaming Preview HUD -->
+        <div class="w-full lg:w-96 cyber-box p-6 bg-black/70 border border-[var(--neon-magenta)] space-y-4">
+          <div class="flex items-center justify-between text-xs font-bold border-b border-white/10 pb-2">
+            <span class="text-[var(--neon-magenta)] font-mono">CORE_STREAM_TELEMETRY</span>
+            <span class="text-[var(--neon-green)]">ONLINE</span>
+          </div>
+
+          <div class="space-y-3 font-mono text-xs">
+            <div class="flex justify-between border-b border-white/5 pb-1.5">
+              <span class="text-gray-400">RESOLUTION:</span> <span class="text-white font-bold">1080p / 720p / 480p / AUTO</span>
+            </div>
+            <div class="flex justify-between border-b border-white/5 pb-1.5">
+              <span class="text-gray-400">AUDIO DUBS:</span> <span class="text-[var(--neon-cyan)] font-bold">Hindi, Original, Tamil, etc.</span>
+            </div>
+            <div class="flex justify-between border-b border-white/5 pb-1.5">
+              <span class="text-gray-400">STREAM PROTOCOL:</span> <span class="text-white">MPEG-DASH (ISO BMFF .m4s)</span>
+            </div>
+            <div class="flex justify-between border-b border-white/5 pb-1.5">
+              <span class="text-gray-400">PROXY BUFFER:</span> <span class="text-[var(--neon-green)]">256 KB Dynamic Chunking</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-400">ADS / TRACKERS:</span> <span class="text-[var(--neon-magenta)] font-bold">0% (PURGED)</span>
+            </div>
+          </div>
+
+          <a href="/watch" class="w-full py-2 px-4 rounded bg-[rgba(255,0,119,0.2)] hover:bg-[var(--neon-magenta)] hover:text-white border border-[var(--neon-magenta)] font-hud font-bold text-xs flex items-center justify-center gap-2 transition-all block text-center">
+            <i data-feather="film" class="w-4 h-4 inline"></i> STREAM NOW ON BROWSER &rarr;
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Multi-Device Downloads Section -->
+    <section id="flix-downloads" class="space-y-6">
+      <div class="text-center max-w-2xl mx-auto space-y-2">
+        <h2 class="text-3xl font-extrabold font-hud text-white glow-cyan">AVAILABLE DEVICE DOWNLOADS</h2>
+        <p class="text-xs font-mono text-gray-400">Install Ayushflix natively on your Samsung Smart TV, Android device, or browser</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 font-mono text-xs">
+
+        <!-- Samsung Smart TV -->
+        <div class="cyber-box p-6 border-[var(--neon-cyan)] flex flex-col justify-between space-y-4">
+          <div class="space-y-2">
+            <div class="w-10 h-10 rounded bg-[rgba(0,240,255,0.15)] flex items-center justify-center text-[var(--neon-cyan)] border border-[var(--neon-cyan)] mb-3">
+              <i data-feather="tv"></i>
+            </div>
+            <h3 class="text-base font-bold text-white">Samsung Smart TV</h3>
+            <p class="text-gray-400 leading-relaxed">Native Tizen OS package (.wgt) pre-packaged with D-pad navigation, remote play/pause controls, and direct DASH playback.</p>
+          </div>
+          <a href="/static/downloads/Ayushflix.wgt" download="Ayushflix.wgt" class="cyber-btn w-full justify-center">
+            <i data-feather="download"></i> DOWNLOAD AYUSHFLIX.WGT
+          </a>
+        </div>
+
+        <!-- Android & Android TV -->
+        <div class="cyber-box p-6 border-[var(--neon-green)] flex flex-col justify-between space-y-4">
+          <div class="space-y-2">
+            <div class="w-10 h-10 rounded bg-[rgba(0,255,102,0.15)] flex items-center justify-center text-[var(--neon-green)] border border-[var(--neon-green)] mb-3">
+              <i data-feather="smartphone"></i>
+            </div>
+            <h3 class="text-base font-bold text-white">Android & Android TV</h3>
+            <p class="text-gray-400 leading-relaxed">Full mobile & Leanback TV APK with hardware decoding, gesture seeking, background audio, and instant Hindi dub selector.</p>
+          </div>
+          <a href="https://github.com/jaatayushh/ayushflix/releases" target="_blank" class="cyber-btn cyber-btn-green w-full justify-center">
+            <i data-feather="download"></i> DOWNLOAD ANDROID APK
+          </a>
+        </div>
+
+        <!-- Web Streamer / PWA -->
+        <div class="cyber-box p-6 border-[var(--neon-magenta)] flex flex-col justify-between space-y-4">
+          <div class="space-y-2">
+            <div class="w-10 h-10 rounded bg-[rgba(255,0,119,0.15)] flex items-center justify-center text-[var(--neon-magenta)] border border-[var(--neon-magenta)] mb-3">
+              <i data-feather="globe"></i>
+            </div>
+            <h3 class="text-base font-bold text-white">Web Streamer & PWA</h3>
+            <p class="text-gray-400 leading-relaxed">Zero installation needed. Instant browser streaming with Netflix-style spotlights, resume watching, and custom profiles.</p>
+          </div>
+          <a href="/watch" class="cyber-btn cyber-btn-magenta w-full justify-center">
+            <i data-feather="external-link"></i> OPEN WEB APP
+          </a>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="relative z-10 border-t border-white/10 py-8 text-center text-xs font-mono text-gray-500">
+    <div>AYUSHFLIX &bull; AD-FREE REVERSE ENGINEERED STREAMING &bull; GITHUB: @JAATAYUSHH</div>
+  </footer>
+
+  <script src="/static/js/matrix.js"></script>
+  <script>feather.replace();</script>
+</body>
+</html>
