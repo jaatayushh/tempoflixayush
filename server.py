@@ -17,7 +17,7 @@ from http.server import SimpleHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from concurrent.futures import ThreadPoolExecutor
 
-PORT = int(os.environ.get("PORT", 8000))
+PORT = int(os.environ.get("PORT", 3000))
 SECRET_KEY = base64.b64decode("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==").decode("utf-8")
 BASE_URL = "https://api3.aoneroom.com"
 
