@@ -38,6 +38,16 @@
     if (typeof dashjs === 'undefined') {
       document.write('<script src="https://cdn.dashjs.org/v4.7.4/dash.all.min.js"><\/script>');
     }
+    (function() {
+      const _origFetch = window.fetch;
+      window.fetch = function(url, options) {
+        options = options || {};
+        if (typeof url === 'string' && url.startsWith('/api/')) {
+          options.headers = Object.assign({}, options.headers || {}, { 'X-Ayush-Internal': '1' });
+        }
+        return _origFetch.call(this, url, options);
+      };
+    })();
   </script>
 
   <!-- HLS.js for cross-browser & Smart TV (Tizen) HLS streaming -->
@@ -1457,9 +1467,6 @@
                 <button data-section="download" class="pwa-download-trigger nav-section-link profile-menu-item w-full flex items-center gap-3 px-4 py-2.5 text-sm text-[#E50914] font-semibold text-left hover:bg-white/10 transition-colors">
                   <i data-feather="download" class="w-4 h-4 text-[#E50914]"></i> Download App
                 </button>
-                <button id="menu-admin-btn" class="hidden profile-menu-item w-full flex items-center gap-3 px-4 py-2.5 text-sm text-white text-left hover:bg-white/10 transition-colors">
-                  <i data-feather="shield" class="w-4 h-4 text-[#E50914]"></i> Admin Panel
-                </button>
                 <button id="switch-profile-btn" class="profile-menu-item w-full flex items-center gap-3 px-4 py-2.5 text-sm text-white text-left hover:bg-white/10 transition-colors">
                   <i data-feather="repeat" class="w-4 h-4 text-[var(--muted)]"></i> Switch Profiles
                 </button>
@@ -1868,8 +1875,11 @@
                 <!-- Injected dynamically by JS -->
               </div>
 
-              <button id="dismiss-install-guide-btn" class="w-full py-3 btn-secondary rounded-xl font-bold text-sm">
-                Got It
+              <a href="https://github.com/jaatayushh/ayushflix" target="_blank" class="w-full py-3 bg-[#E50914] hover:bg-[#B81D24] text-white rounded-xl font-bold text-sm flex items-center justify-center gap-2 shadow-lg transition-all text-center">
+                <i data-feather="github" class="w-4 h-4"></i> Open AYUSHFLIX GitHub Repository
+              </a>
+              <button id="dismiss-install-guide-btn" class="w-full py-2.5 btn-secondary rounded-xl font-bold text-sm">
+                Close
               </button>
             </div>
           </div>
@@ -4365,8 +4375,8 @@ const TMDB_KEY = '6cffbd2afef40abe5ce96016e1c81548';
         function getTmdbImageUrl(path, size = 'w500') {
           if (!path) return null;
           if (typeof path === 'string' && path.startsWith('http')) return path;
-          // Use wsrv.nl CDN proxy to bypass ISP blocks on image.tmdb.org in India and guarantee fast delivery
-          return `https://wsrv.nl/?url=https://image.tmdb.org/t/p/${size}${path}`;
+          const cleanPath = path.startsWith('/') ? path : '/' + path;
+          return `/api/tmdb/image?size=${encodeURIComponent(size)}&path=${encodeURIComponent(cleanPath)}`;
         }
         window.getTmdbImageUrl = getTmdbImageUrl;
 
@@ -6269,19 +6279,26 @@ function initHeroScrollAndVisibility() {
         navDownloadBtn.addEventListener('click', (e) => {
           e.preventDefault();
           e.stopPropagation();
-          triggerInstall('general');
+          window.open('https://github.com/jaatayushh/ayushflix', '_blank');
         });
       }
 
       document.querySelectorAll('.pwa-install-trigger').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const isAndroid = btn.id === 'install-android-btn';
-          triggerInstall(isAndroid ? 'android' : 'desktop');
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.open('https://github.com/jaatayushh/ayushflix', '_blank');
         });
       });
 
       const iosBtn = document.getElementById('install-ios-guide-btn');
-      if (iosBtn) iosBtn.addEventListener('click', () => showInstallGuide('ios'));
+      if (iosBtn) {
+        iosBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.open('https://github.com/jaatayushh/ayushflix', '_blank');
+        });
+      }
 
       const androidHelpBtn = document.getElementById('android-instructions-btn');
       if (androidHelpBtn) androidHelpBtn.addEventListener('click', () => showInstallGuide('android'));

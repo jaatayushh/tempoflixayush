@@ -61,6 +61,25 @@ def generate_signature(method, accept, content_type, url, body="", timestamp=Non
     mac = hmac.new(base64.b64decode(SECRET_KEY), canonical.encode("utf-8"), hashlib.md5)
     return f"{timestamp}|2|{base64.b64encode(mac.digest()).decode()}"
 
+def extract_policy_resource(cookie):
+    import re
+    if not cookie:
+        return None
+    m = re.search(r"CloudFront-Policy=([^;]+)", cookie)
+    if not m:
+        return None
+    try:
+        raw = m.group(1).translate(str.maketrans("-_~", "+=/"))
+        raw += "=" * ((4 - len(raw) % 4) % 4)
+        data = json.loads(base64.b64decode(raw).decode('utf-8', errors='ignore'))
+        return data.get("Statement", [{}])[0].get("Resource")
+    except Exception:
+        return None
+
+def is_update_stream(url):
+    u = (url or "").lower()
+    return "b164fbfb4347792950bdfbfb563d39d9" in u or "/other/2026/09/04/" in u or "app_update" in u
+
 # Token management
 token_cache = {"token": None, "ts": 0}
 token_lock = threading.Lock()
@@ -337,11 +356,20 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def check_api_key_auth(self, qs):
-        # 1. Allow internal requests from the web player or admin UI
-        ref = self.headers.get("Referer", "")
-        origin = self.headers.get("Origin", "")
+        # 1. Allow internal requests from the web player, portfolio, or admin UI
+        host = self.headers.get("Host", "").lower().split(":")[0]
+        ref = self.headers.get("Referer", "").lower()
+        origin = self.headers.get("Origin", "").lower()
+        sec_fetch = self.headers.get("Sec-Fetch-Site", "").lower()
         internal_hdr = self.headers.get("X-Ayush-Internal", "")
-        if internal_hdr == "1" or "localhost" in ref or "ayush.ai.studio" in ref or "localhost" in origin or "ayush.ai.studio" in origin:
+
+        if internal_hdr == "1" or sec_fetch in ("same-origin", "same-site"):
+            return True, {"name": "Internal Client", "status": "active"}
+
+        if any(d in host for d in ["localhost", "127.0.0.1", "flix.", "music."]) or (host.endswith("ayush.ai.studio") and not host.startswith("api.")):
+            return True, {"name": "Web UI Client", "status": "active"}
+
+        if any(d in ref for d in ["localhost", "127.0.0.1", "ayush.ai.studio"]) or any(d in origin for d in ["localhost", "127.0.0.1", "ayush.ai.studio"]):
             return True, {"name": "Internal Client", "status": "active"}
 
         # 2. Extract key from header or query param
@@ -477,17 +505,21 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         # 6. JSON REST API Endpoints (Protected by API Key for external calls)
         # ----------------------------------------------------------------------
         if path.startswith("/api/"):
-            if not path.startswith("/api/admin/"):
+            if not path.startswith("/api/admin/") and path != "/api/tmdb/image":
                 is_auth, key_info = self.check_api_key_auth(qs)
                 if not is_auth:
-                    msg = "Missing API key. Provide via 'X-API-Key' header or '?api_key=' parameter." if key_info == "missing" else "API key is revoked or invalid."
                     self.send_json({
                         "status": "error",
                         "code": 401,
                         "error": "Unauthorized",
-                        "message": f"{msg} Manage keys at http://admin.ayush.ai.studio"
+                        "message": "Unauthorized: A valid API key is required. Contact the admin on Reddit for a free API key: https://reddit.com/user/jaatayushh"
                     }, status=401)
                     return
+
+            if path == "/api/tmdb/image":
+                t_path = qs.get("path", [""])[0]
+                t_size = qs.get("size", ["w500"])[0]
+                return self.handle_api_tmdb_image(t_path, t_size)
 
             if path == "/api/home":
                 tab = qs.get("tab", ["all"])[0]
@@ -764,6 +796,41 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
                 continue
         self.send_json({"error": "TMDB proxy request failed"}, status=502)
 
+    def handle_api_tmdb_image(self, img_path, size="w500"):
+        if not img_path:
+            self.send_response(400); self.end_headers(); return
+        clean_path = img_path if img_path.startswith("/") else f"/{img_path}"
+        if not size:
+            size = "w500"
+
+        target_url = f"https://image.tmdb.org/t/p/{size}{clean_path}"
+        fallback_url = f"https://wsrv.nl/?url=https://image.tmdb.org/t/p/{size}{clean_path}"
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+        }
+
+        for u in [target_url, fallback_url]:
+            try:
+                req = urllib.request.Request(u, headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    if resp.status == 200:
+                        content_type = resp.headers.get("Content-Type", "image/jpeg")
+                        data = resp.read()
+                        self.send_response(200)
+                        self.send_header("Content-Type", content_type)
+                        self.send_header("Content-Length", str(len(data)))
+                        self.send_header("Cache-Control", "public, max-age=604800, immutable")
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
+            except Exception:
+                continue
+
+        self.send_response(404)
+        self.end_headers()
+
     def handle_api_streams(self, sid, se=0, ep=0):
         if not sid:
             self.send_json({"status": "error", "message": "Missing ID"}, status=400)
@@ -809,7 +876,23 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
                         fmt = (st.get("format") or "MP4").upper()
                         res = st.get("resolutions") or "HD"
                         resolved_url = raw_url
-                        if ".mpd" in resolved_url.lower():
+                        is_dash = ".mpd" in resolved_url.lower()
+
+                        # Universal fix: If upstream enforces app update by returning a dummy update video,
+                        # resolve the real DASH stream URL from the signed CloudFront-Policy
+                        if is_update_stream(raw_url) or "/dash/" in cookie:
+                            policy_res = extract_policy_resource(cookie)
+                            if policy_res:
+                                base_res = policy_res.rstrip('*').rstrip('/')
+                                if "/dash/" in base_res or "/hls/" in base_res or "sacdn." in base_res:
+                                    resolved_url = f"{base_res}/index.mpd"
+                                    is_dash = True
+
+                        # If still an update video with no real stream, discard it
+                        if is_update_stream(resolved_url):
+                            continue
+
+                        if is_dash:
                             sess_id = register_dash_session(resolved_url, cookie)
                             proxy_url = f"/stream/dash/{sess_id}/manifest.mpd"
                             stream_fmt = "DASH"
@@ -863,16 +946,38 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
 
         try:
             if filename.endswith(".mpd") or filename == "manifest.mpd":
-                req = urllib.request.Request(target_url, headers=upstream_headers)
-                with urllib.request.urlopen(req, timeout=15) as v_resp:
-                    data = rewrite_manifest_codecs(v_resp.read().decode('utf-8', errors='replace')).encode('utf-8')
-                    self.send_response(200)
-                    self.send_header("Content-Type", "application/dash+xml; charset=utf-8")
-                    self.send_header("Content-Length", str(len(data)))
-                    self.send_header("Cache-Control", "no-cache")
-                    self.end_headers()
-                    self.wfile.write(data)
-                    return
+                try:
+                    req = urllib.request.Request(target_url, headers=upstream_headers)
+                    with urllib.request.urlopen(req, timeout=15) as v_resp:
+                        data = rewrite_manifest_codecs(v_resp.read().decode('utf-8', errors='replace')).encode('utf-8')
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/dash+xml; charset=utf-8")
+                        self.send_header("Content-Length", str(len(data)))
+                        self.send_header("Cache-Control", "no-cache")
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
+                except urllib.error.HTTPError as he:
+                    alt_url = None
+                    if target_url.endswith("/manifest.mpd"):
+                        alt_url = target_url[:-13] + "/index.mpd"
+                    elif target_url.endswith("/index.mpd"):
+                        alt_url = target_url[:-10] + "/manifest.mpd"
+                    if alt_url:
+                        try:
+                            req2 = urllib.request.Request(alt_url, headers=upstream_headers)
+                            with urllib.request.urlopen(req2, timeout=15) as v_resp2:
+                                data = rewrite_manifest_codecs(v_resp2.read().decode('utf-8', errors='replace')).encode('utf-8')
+                                self.send_response(200)
+                                self.send_header("Content-Type", "application/dash+xml; charset=utf-8")
+                                self.send_header("Content-Length", str(len(data)))
+                                self.send_header("Cache-Control", "no-cache")
+                                self.end_headers()
+                                self.wfile.write(data)
+                                return
+                        except Exception:
+                            pass
+                    raise
 
             req = urllib.request.Request(target_url, headers=upstream_headers)
             with urllib.request.urlopen(req, timeout=20) as v_resp:
@@ -942,7 +1047,6 @@ def run():
     print(f"  - Ayushflix:  http://localhost:{PORT}/watch  (flix.ayush.ai.studio)", flush=True)
     print(f"  - AyushMuzic: http://localhost:{PORT}/music  (music.ayush.ai.studio)", flush=True)
     print(f"  - Stream API: http://localhost:{PORT}/api    (api.ayush.ai.studio)", flush=True)
-    print(f"  - Admin Hub:  http://localhost:{PORT}/admin  (Secret Admin Panel)", flush=True)
     print(f"===========================================================", flush=True)
     try:
         httpd.serve_forever()
