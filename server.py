@@ -87,29 +87,56 @@ def rewrite_manifest_codecs(manifest_text):
         return tag
     return re.sub(r'<Representation[^>]+>', fix_rep, manifest_text)
 
-def api_request(url, method="GET", body=None):
-    ts = int(time.time() * 1000)
-    body_str = body if body else ""
-    accept = "application/json;charset=utf-8"
-    content_type = "application/json" if method == "POST" else ""
-    sign = generate_signature(method, accept, content_type, url, body_str, ts)
-    token = get_x_client_token(ts)
-
-    headers = {
-        "Accept": accept,
-        "X-Client-Time": str(ts),
-        "X-Client-Sign": sign,
-        "X-Client-Token": token,
-        "User-Agent": "com.community.mbox.in/50020126 (Linux; U; Android 14; en_US; Pixel 8; Build/UD1A.230803.041; Cronet/145.0.7582.0)",
-        "Connection": "keep-alive"
+def get_api_headers(url, method="GET", body="", token=None):
+    now = int(time.time() * 1000)
+    ct = "application/json"
+    h = {
+        "user-agent": "com.community.mbox.in/50020126 (Linux; U; Android 14; en_US; Pixel 8; Build/UD1A.230803.041; Cronet/145.0.7582.0)",
+        "accept": "application/json",
+        "content-type": ct,
+        "x-client-token": get_x_client_token(now),
+        "x-tr-signature": generate_signature(method, "application/json", ct, url, body, now),
+        "x-client-info": '{"package_name":"com.community.mbox.in","version_name":"4.0.02.0831.03","version_code":50020126,"os":"android","os_version":"14","install_ch":"official","device_id":"1234567890abcdef1234567890abcdef","install_store":"official","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"Google","model":"Pixel 8","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"America/New_York","sp_code":"","X-Play-Mode":"1","X-Idle-Data":"1","X-Family-Mode":"0","X-Content-Mode":"0"}',
+        "x-client-status": "0"
     }
-    if content_type:
-        headers["Content-Type"] = content_type
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
 
-    data_bytes = body_str.encode("utf-8") if body_str else None
-    req = urllib.request.Request(url, data=data_bytes, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=12) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+token_cache = {"token": None, "ts": 0}
+def get_token(force=False):
+    now = time.time()
+    if not force and token_cache["token"] and (now - token_cache["ts"]) < 3600:
+        return token_cache["token"]
+    u = f"{BASE_URL}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
+    req = urllib.request.Request(u, headers=get_api_headers(u))
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            t = json.loads(resp.headers.get("x-user", "{}")).get("token")
+            if t:
+                token_cache["token"] = t
+                token_cache["ts"] = now
+                return t
+    except Exception as e:
+        print(f"[ERROR] Failed to get token: {e}", flush=True)
+    return token_cache.get("token")
+
+def api_request(url, method="GET", body="", timeout=15):
+    token = get_token()
+    headers = get_api_headers(url, method=method, body=body, token=token)
+    data = body.encode("utf-8") if body else None
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 441):
+            token = get_token(force=True)
+            headers = get_api_headers(url, method=method, body=body, token=token)
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        raise
 
 class MultiCyberServer(SimpleHTTPRequestHandler):
     def end_headers(self):
