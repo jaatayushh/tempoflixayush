@@ -544,7 +544,7 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
                         "status": "error",
                         "code": 401,
                         "error": "Unauthorized",
-                        "message": "Unauthorized: A valid API key is required. Contact the admin on Reddit for a free API key: https://reddit.com/user/jaatayushh"
+                        "message": "Unauthorized: A valid API key is required. Contact the admin on Reddit for a free API key: https://www.reddit.com/user/Used-Show-2246/"
                     }, status=401)
                     return
 

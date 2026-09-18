@@ -6843,6 +6843,14 @@ function initHeroScrollAndVisibility() {
         if (seriesSec) seriesSec.classList.add('hidden');
         if (moviesSec) moviesSec.classList.add('hidden');
 
+        // Hide ALL dynamic category rows (MovieBox 10 rows, My List, Family Picks, etc.)
+        const dynRows = document.getElementById('moviebox-dynamic-rows');
+        if (dynRows) dynRows.classList.add('hidden');
+        const myListSec = document.getElementById('my-list-section');
+        if (myListSec) myListSec.classList.add('hidden');
+        const familySec = document.getElementById('family-picks-section');
+        if (familySec) familySec.classList.add('hidden');
+
         if (browseTitle) browseTitle.textContent = `Search Results for "${query}"`;
 
         // Render local cached search matches instantly
@@ -6851,6 +6859,13 @@ function initHeroScrollAndVisibility() {
           (v.folder && v.folder.toLowerCase().includes(trimmedQuery))
         );
         renderGrid(localFiltered);
+
+        // Autoscroll to search results so user sees them immediately
+        if (browseTitle) {
+          setTimeout(() => {
+            browseTitle.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 80);
+        }
 
         // Fetch live catalog from /api/search API
         clearTimeout(searchDebounceTimer);
@@ -6879,6 +6894,12 @@ function initHeroScrollAndVisibility() {
                 const currentQuery = (searchInput ? searchInput.value : (mobileSearchInput ? mobileSearchInput.value : '')).trim().toLowerCase();
                 if (currentQuery === trimmedQuery) {
                   renderGrid(searchCards);
+                  // Autoscroll again after API results render
+                  if (browseTitle) {
+                    setTimeout(() => {
+                      browseTitle.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }, 80);
+                  }
                   return;
                 }
               }
@@ -6900,6 +6921,14 @@ function initHeroScrollAndVisibility() {
         if (newSec) newSec.classList.remove('hidden');
         if (seriesSec) seriesSec.classList.remove('hidden');
         if (moviesSec) moviesSec.classList.remove('hidden');
+
+        // Restore dynamic rows
+        const dynRows = document.getElementById('moviebox-dynamic-rows');
+        if (dynRows) dynRows.classList.remove('hidden');
+        const myListSec = document.getElementById('my-list-section');
+        if (myListSec) myListSec.classList.remove('hidden');
+        const familySec = document.getElementById('family-picks-section');
+        if (familySec) familySec.classList.remove('hidden');
 
         renderHero();
         renderContinueWatching();
@@ -10131,6 +10160,34 @@ function initHeroScrollAndVisibility() {
         });
       }
 
+      // 2b. Populate quality options from availableStreams (MovieBox multi-resolution DASH streams)
+      if (availableQualities.length <= 1 && currentVideoInfo && Array.isArray(currentVideoInfo.availableStreams) && currentVideoInfo.availableStreams.length > 1) {
+        const streamQualities = [];
+        const seenStreamQ = new Set();
+        currentVideoInfo.availableStreams.forEach(s => {
+          const streamUrl = s.streamUrl || s.url;
+          if (!streamUrl) return;
+          const qTag = detectQuality(s.quality || s.label || s.language || streamUrl) || '1080p';
+          const lang = (s.language || '').toLowerCase();
+          // Only add distinct resolution streams (skip duplicate audio dubs at same resolution)
+          const qKey = qTag + '_' + lang;
+          if (!seenStreamQ.has(qKey)) {
+            seenStreamQ.add(qKey);
+            streamQualities.push({
+              label: `${qualityDisplayName(qTag)}${lang ? ' (' + lang.charAt(0).toUpperCase() + lang.slice(1) + ')' : ''}`,
+              quality: qTag,
+              rank: qualityRank(qTag),
+              url: streamUrl,
+              format: s.format || 'DASH',
+              isStreamSwitch: true
+            });
+          }
+        });
+        if (streamQualities.length > 1) {
+          availableQualities = streamQualities;
+        }
+      }
+
       let isHlsMultiLevel = false;
       if (activeHlsInstance && activeHlsInstance.levels && activeHlsInstance.levels.length > 1) {
         isHlsMultiLevel = true;
@@ -10304,11 +10361,20 @@ function initHeroScrollAndVisibility() {
             }
             const wasPaused = videoEl.paused;
             currentVideoInfo.url = chosenObj.url;
+            currentVideoInfo.streamUrl = chosenObj.url;
             pendingResumeTime = prevTime;
             saveWatchProgress(true);
 
-            videoEl.src = chosenObj.url;
-            try { videoEl.load(); } catch (err) {}
+            const isDashStream = chosenObj.url.includes('.mpd') || (chosenObj.format === 'DASH') || (currentVideoInfo.format === 'DASH');
+            const isHlsStream = chosenObj.url.includes('.m3u8') || (chosenObj.format === 'HLS') || (currentVideoInfo.format === 'HLS');
+            if (isDashStream || isHlsStream || chosenObj.isStreamSwitch) {
+              if (chosenObj.format) currentVideoInfo.format = chosenObj.format;
+              if (isDashStream) currentVideoInfo.mimeType = 'application/dash+xml';
+              mountMediaStream(videoEl);
+            } else {
+              videoEl.src = chosenObj.url;
+              try { videoEl.load(); } catch (err) {}
+            }
 
             showPlayerToast(`Auto Quality: Switched to ${chosenObj.quality.toUpperCase()}`);
 
@@ -10455,13 +10521,25 @@ function initHeroScrollAndVisibility() {
                 } catch (e) {
                   prevTime = vEl.currentTime || 0;
                 }
-                const wasPaused = vEl.paused;
                 currentVideoInfo.url = qObj.url;
+                currentVideoInfo.streamUrl = qObj.url;
                 pendingResumeTime = prevTime;
                 saveWatchProgress(true);
 
-                vEl.src = qObj.url;
-                try { vEl.load(); } catch (err) {}
+                // Determine if this is a DASH/HLS stream that needs proper remounting
+                const isDashStream = qObj.url.includes('.mpd') || (qObj.format === 'DASH') || (currentVideoInfo.format === 'DASH');
+                const isHlsStream = qObj.url.includes('.m3u8') || (qObj.format === 'HLS') || (currentVideoInfo.format === 'HLS');
+
+                if (isDashStream || isHlsStream || qObj.isStreamSwitch) {
+                  // For DASH/HLS, re-mount via mountMediaStream which properly resets dash.js/hls.js
+                  if (qObj.format) currentVideoInfo.format = qObj.format;
+                  if (isDashStream) currentVideoInfo.mimeType = 'application/dash+xml';
+                  mountMediaStream(vEl);
+                } else {
+                  // For plain MP4, direct src assignment works fine
+                  vEl.src = qObj.url;
+                  try { vEl.load(); } catch (err) {}
+                }
 
                 showPlayerToast(`Stream quality: ${qObj.quality.toUpperCase()} (${qObj.label})`);
 
