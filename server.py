@@ -197,19 +197,40 @@ def register_dash_session(resolved_url, cookie):
 
 def rewrite_manifest_codecs(manifest_text):
     import re
-    def fix_rep(match):
+
+    def fix_tag(match):
         tag = match.group(0)
         codec_m = re.search(r'codecs="([^"]+)"', tag)
         if codec_m:
             c = codec_m.group(1)
-            if c.startswith('hev1.') and len(c.split('.')) < 4:
-                tag = tag.replace(f'codecs="{c}"', 'codecs="hev1.1.6.L93.B0"')
-            elif c.startswith('hvc1.') and len(c.split('.')) < 4:
-                tag = tag.replace(f'codecs="{c}"', 'codecs="hvc1.1.6.L93.B0"')
-            elif c.startswith('avc1.') and len(c.split('.')) < 3:
+            # HEVC codecs: hev1 or hvc1
+            if c == "hev1" or c == "hvc1" or (c.startswith("hev1") and len(c.split('.')) < 4) or (c.startswith("hvc1") and len(c.split('.')) < 4):
+                h_m = re.search(r'height="(\d+)"', tag) or re.search(r'maxHeight="(\d+)"', manifest_text)
+                h = int(h_m.group(1)) if h_m else 480
+                lvl = "L120" if h >= 1080 else ("L93" if h >= 720 else "L90")
+                tag = tag.replace(f'codecs="{c}"', f'codecs="hev1.1.6.{lvl}.B0"')
+            elif c == "avc1" or (c.startswith("avc1") and len(c.split('.')) < 3):
                 tag = tag.replace(f'codecs="{c}"', 'codecs="avc1.4d401f"')
         return tag
-    return re.sub(r'<Representation[^>]+>', fix_rep, manifest_text)
+
+    manifest_text = re.sub(r'<Representation\b[^>]+>', fix_tag, manifest_text)
+    manifest_text = re.sub(r'<AdaptationSet\b[^>]+>', fix_tag, manifest_text)
+
+    # Provide dual representation: both hev1 (Chromium/Android) and hvc1 (Apple Safari/Edge)
+    def duplicate_for_hvc1(match):
+        rep_block = match.group(0)
+        if 'codecs="hev1.' in rep_block and 'hvc1.' not in rep_block:
+            hvc_rep = rep_block
+            orig_id_m = re.search(r'id="([^"]+)"', rep_block)
+            orig_id = orig_id_m.group(1) if orig_id_m else "0"
+            hvc_rep = re.sub(r'id="([^"]+)"', r'id="\1_hvc"', hvc_rep, count=1)
+            hvc_rep = hvc_rep.replace('codecs="hev1.', 'codecs="hvc1.')
+            hvc_rep = hvc_rep.replace('$RepresentationID$', orig_id)
+            return rep_block + "\n\t\t" + hvc_rep
+        return rep_block
+
+    manifest_text = re.sub(r'<Representation\b[^>]*>.*?</Representation>', duplicate_for_hvc1, manifest_text, flags=re.DOTALL)
+    return manifest_text
 
 def fetch_category_items(cat_spec, cat_title):
     try:
@@ -940,7 +961,8 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         if sess.get("cookie"):
             upstream_headers["Cookie"] = sess["cookie"]
 
-        target_url = sess["manifest_url"] if (filename == "manifest.mpd" or filename.endswith(".mpd")) else f"{sess['base_url']}/{filename}"
+        clean_fn = filename.replace("_hvc", "")
+        target_url = sess["manifest_url"] if (filename == "manifest.mpd" or filename.endswith(".mpd")) else f"{sess['base_url']}/{clean_fn}"
         range_hdr = self.headers.get("Range")
         if range_hdr: upstream_headers["Range"] = range_hdr
 
