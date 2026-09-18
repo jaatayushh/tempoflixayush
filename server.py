@@ -377,8 +377,19 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def check_api_key_auth(self, qs):
-        # 1. Allow internal requests from the web player, portfolio, or admin UI
         host = self.headers.get("Host", "").lower().split(":")[0]
+
+        # 1. If accessing via the public API domain (api.ayush.ai.studio), an API key is STRICTLY required!
+        if host.startswith("api."):
+            api_key = self.headers.get("X-API-Key") or qs.get("api_key", [""])[0] or qs.get("key", [""])[0]
+            if not api_key:
+                return False, "missing"
+            ok, result = track_api_key_usage(api_key.strip())
+            if ok:
+                return True, result
+            return False, result
+
+        # 2. For the website frontends (flix.ayush.ai.studio, music.ayush.ai.studio, localhost):
         ref = self.headers.get("Referer", "").lower()
         origin = self.headers.get("Origin", "").lower()
         sec_fetch = self.headers.get("Sec-Fetch-Site", "").lower()
@@ -393,7 +404,7 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         if any(d in ref for d in ["localhost", "127.0.0.1", "ayush.ai.studio"]) or any(d in origin for d in ["localhost", "127.0.0.1", "ayush.ai.studio"]):
             return True, {"name": "Internal Client", "status": "active"}
 
-        # 2. Extract key from header or query param
+        # 3. Any other direct external caller requires a valid API key
         api_key = self.headers.get("X-API-Key") or qs.get("api_key", [""])[0] or qs.get("key", [""])[0]
         if not api_key:
             return False, "missing"
