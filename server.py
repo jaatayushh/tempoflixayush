@@ -36,14 +36,21 @@ UPSTREAM_PROFILES = [
         "ip": "103.211.52.1"
     },
     {
-        "id": "global",
+        "id": "sg",
         "package_name": "com.community.oneroom",
-        "region": "US",
-        "timezone": "America/New_York",
-        "locale": "en_US",
-        "ip": "67.180.12.34"
+        "region": "SG",
+        "timezone": "Asia/Singapore",
+        "locale": "en_SG",
+        "ip": "103.211.52.1"
     }
 ]
+UPSTREAM_PROXY = (os.environ.get("UPSTREAM_PROXY") or os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY") or "").strip()
+if UPSTREAM_PROXY:
+    proxy_handler = urllib.request.ProxyHandler({'http': UPSTREAM_PROXY, 'https': UPSTREAM_PROXY})
+    opener = urllib.request.build_opener(proxy_handler)
+    urllib.request.install_opener(opener)
+    print(f"[INFO] Upstream proxy configured: {UPSTREAM_PROXY}", flush=True)
+
 BASE_URL = API_DOMAINS[0]
 DEVICE_ID = os.environ.get("DEVICE_ID") or secrets.token_hex(16)
 GAID = os.environ.get("GAID") or str(uuid.uuid4())
