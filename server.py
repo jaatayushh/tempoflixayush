@@ -24,8 +24,25 @@ PORT = int(os.environ.get("PORT", 3000))
 SECRET_KEY = base64.b64decode("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==").decode("utf-8")
 API_DOMAINS = [
     "https://api3.aoneroom.com",
-    "https://apig.inmoviebox.com",
-    "https://api.inmoviebox.com"
+    "https://apig.inmoviebox.com"
+]
+UPSTREAM_PROFILES = [
+    {
+        "id": "in",
+        "package_name": "com.community.mbox.in",
+        "region": "IN",
+        "timezone": "Asia/Calcutta",
+        "locale": "en_IN",
+        "ip": "103.211.52.1"
+    },
+    {
+        "id": "global",
+        "package_name": "com.community.oneroom",
+        "region": "US",
+        "timezone": "America/New_York",
+        "locale": "en_US",
+        "ip": "67.180.12.34"
+    }
 ]
 BASE_URL = API_DOMAINS[0]
 DEVICE_ID = os.environ.get("DEVICE_ID") or secrets.token_hex(16)
@@ -147,36 +164,45 @@ def is_update_stream(url):
     return "b164fbfb4347792950bdfbfb563d39d9" in u or "/other/2026/09/04/" in u or "app_update" in u
 
 # Token management
-token_cache = {"token": None, "ts": 0}
+token_cache = {}  # (domain, profile_id) -> {"token": str, "ts": float}
 token_lock = threading.Lock()
 
-def get_token(force=False):
+def get_token(domain=None, profile=None, force=False):
+    if profile is None:
+        profile = UPSTREAM_PROFILES[0]
+    domains_to_try = [domain] if domain else API_DOMAINS
     with token_lock:
         now = time.time()
-        if not force and token_cache["token"] and (now - token_cache["ts"]) < 3600:
-            return token_cache["token"]
-        
-        # Try fetching token across all upstream domains
-        for domain in API_DOMAINS:
-            u = f"{domain}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
-            req = urllib.request.Request(u, headers=get_api_headers(u))
+        for d in domains_to_try:
+            cache_key = (d, profile["id"])
+            entry = token_cache.get(cache_key)
+            if not force and entry and (now - entry["ts"]) < 3600 and entry["token"]:
+                return entry["token"]
+            
+            u = f"{d}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
+            headers = get_api_headers(u, profile=profile, skip_auth=True)
+            req = urllib.request.Request(u, headers=headers)
             try:
-                with urllib.request.urlopen(req, timeout=8) as resp:
+                with urllib.request.urlopen(req, timeout=6) as resp:
                     t = json.loads(resp.headers.get("x-user", "{}")).get("token")
                     if t:
-                        token_cache["token"] = t
-                        token_cache["ts"] = now
+                        token_cache[cache_key] = {"token": t, "ts": now}
                         return t
             except Exception as e:
-                print(f"[WARN] Token refresh failed on {domain}: {e}", flush=True)
+                print(f"[WARN] Token refresh failed on {d} ({profile['id']}): {e}", flush=True)
 
-        return token_cache.get("token") or ""
+        for (d, pid), entry in token_cache.items():
+            if entry.get("token"):
+                return entry["token"]
+        return ""
 
-def get_api_headers(url, method="GET", body="", token=None):
+def get_api_headers(url, method="GET", body="", token=None, profile=None, skip_auth=False):
+    if profile is None:
+        profile = UPSTREAM_PROFILES[0]
     now = int(time.time() * 1000)
     ct = "application/json"
     client_info = json.dumps({
-        "package_name": "com.community.mbox.in",
+        "package_name": profile["package_name"],
         "version_name": "4.0.02.0831.03",
         "version_code": 50020126,
         "os": "android",
@@ -189,8 +215,8 @@ def get_api_headers(url, method="GET", body="", token=None):
         "model": "Pixel 8",
         "system_language": "en",
         "net": "NETWORK_WIFI",
-        "region": "US",
-        "timezone": "America/New_York",
+        "region": profile["region"],
+        "timezone": profile["timezone"],
         "sp_code": "",
         "X-Play-Mode": "1",
         "X-Idle-Data": "1",
@@ -199,20 +225,25 @@ def get_api_headers(url, method="GET", body="", token=None):
     }, separators=(',', ':'))
 
     h = {
-        "user-agent": "com.community.mbox.in/50020126 (Linux; U; Android 14; en_US; Pixel 8; Build/UD1A.230803.041; Cronet/145.0.7582.0)",
+        "user-agent": f"{profile['package_name']}/50020126 (Linux; U; Android 14; {profile['locale']}; Pixel 8; Build/UD1A.230803.041; Cronet/145.0.7582.0)",
         "accept": "application/json",
         "content-type": ct,
         "x-client-token": get_x_client_token(now),
         "x-tr-signature": generate_signature(method, "application/json", ct, url, body, now),
         "x-client-info": client_info,
-        "x-client-status": "0"
+        "x-client-status": "0",
+        "X-Forwarded-For": profile["ip"],
+        "X-Real-IP": profile["ip"],
+        "CF-Connecting-IP": profile["ip"],
+        "Client-IP": profile["ip"]
     }
-    t = token if token is not None else token_cache.get("token")
-    if t:
-        h["Authorization"] = f"Bearer {t}"
+    if not skip_auth:
+        t = token if token is not None else get_token(profile=profile)
+        if t:
+            h["Authorization"] = f"Bearer {t}"
     return h
 
-def api_request(url, method="GET", body="", timeout=12):
+def api_request(url, method="GET", body="", timeout=8):
     # Extract path and query so we can failover across all domains
     if "://" in url:
         parsed_target = urllib.parse.urlparse(url)
@@ -220,36 +251,41 @@ def api_request(url, method="GET", body="", timeout=12):
     else:
         path_and_query = url if url.startswith("/") else f"/{url}"
 
-    token = get_token()
     last_err = None
+    data = body.encode("utf-8") if body else None
 
+    # Try each active domain with resilient profiles
     for domain in API_DOMAINS:
-        target_url = f"{domain}{path_and_query}"
-        headers = get_api_headers(target_url, method=method, body=body, token=token)
-        data = body.encode("utf-8") if body else None
-        req = urllib.request.Request(target_url, data=data, headers=headers, method=method)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            last_err = e
-            # If 401, 403, or 441, token might be expired or rejected; force-refresh token and retry this domain once
-            if e.code in (401, 403, 441):
+        for profile in UPSTREAM_PROFILES:
+            target_url = f"{domain}{path_and_query}"
+            token = get_token(domain=domain, profile=profile)
+            headers = get_api_headers(target_url, method=method, body=body, token=token, profile=profile)
+            req = urllib.request.Request(target_url, data=data, headers=headers, method=method)
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    return json.loads(resp.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
                 try:
-                    token = get_token(force=True)
-                    headers = get_api_headers(target_url, method=method, body=body, token=token)
-                    req = urllib.request.Request(target_url, data=data, headers=headers, method=method)
-                    with urllib.request.urlopen(req, timeout=timeout) as resp:
-                        return json.loads(resp.read().decode("utf-8"))
-                except Exception as retry_err:
-                    last_err = retry_err
-                    print(f"[WARN] Retrying {target_url} after token refresh failed: {retry_err}", flush=True)
-            print(f"[WARN] Domain {domain} returned HTTP {e.code}, failing over to next domain...", flush=True)
-            continue
-        except Exception as e:
-            last_err = e
-            print(f"[WARN] Domain {domain} request failed: {e}, failing over to next domain...", flush=True)
-            continue
+                    err_body = e.read().decode("utf-8", errors="replace")
+                except Exception:
+                    err_body = ""
+                print(f"[WARN] {domain} ({profile['id']}) returned HTTP {e.code}: {err_body[:150]}", flush=True)
+                last_err = Exception(f"HTTP Error {e.code}: {err_body if err_body else e.reason}")
+                # If 401, 403, or 441, token might be expired or rejected; force-refresh token and retry this domain & profile once
+                if e.code in (401, 403, 441):
+                    try:
+                        token = get_token(domain=domain, profile=profile, force=True)
+                        headers = get_api_headers(target_url, method=method, body=body, token=token, profile=profile)
+                        req = urllib.request.Request(target_url, data=data, headers=headers, method=method)
+                        with urllib.request.urlopen(req, timeout=timeout) as resp:
+                            return json.loads(resp.read().decode("utf-8"))
+                    except Exception as retry_err:
+                        print(f"[WARN] Retrying {target_url} ({profile['id']}) after token refresh failed: {retry_err}", flush=True)
+                continue
+            except Exception as e:
+                print(f"[WARN] Domain {domain} ({profile['id']}) request failed: {e}", flush=True)
+                last_err = e
+                continue
 
     if last_err:
         raise last_err
