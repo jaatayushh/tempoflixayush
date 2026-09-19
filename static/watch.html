@@ -6987,6 +6987,12 @@ function initHeroScrollAndVisibility() {
           catalogView.classList.remove('hidden');
         }
         if (playerInstance) {
+          // Rescue controls before Plyr dispose destroys the DOM
+          const rescueCtrl = document.getElementById('parent-controls-container');
+          const safeWrap = document.getElementById('controls-wrapper');
+          if (rescueCtrl && safeWrap && rescueCtrl.parentNode !== safeWrap) {
+            safeWrap.appendChild(rescueCtrl);
+          }
           playerInstance.pause();
           playerInstance.dispose();
           playerInstance = null;
@@ -8316,7 +8322,15 @@ function initHeroScrollAndVisibility() {
       if (pControls && controlsWrapper && pControls.parentNode !== controlsWrapper) {
         controlsWrapper.appendChild(pControls);
       }
-      if (playerInstance) { try { playerInstance.dispose(); } catch (e) { } playerInstance = null; }
+      if (playerInstance) {
+        try {
+          const rc = document.getElementById('parent-controls-container');
+          const sw = document.getElementById('controls-wrapper');
+          if (rc && sw && rc.parentNode !== sw) sw.appendChild(rc);
+          playerInstance.dispose();
+        } catch (e) { }
+        playerInstance = null;
+      }
 
       pendingResumeTime = null;
       if (startFromBeginning) {
@@ -9227,6 +9241,13 @@ function initHeroScrollAndVisibility() {
       if (playerInstance) {
         try { playerInstance.dispose(); } catch (e) {}
         playerInstance = null;
+      }
+      // Rescue player controls container before clearing video-slot
+      // (Plyr moves it into its own DOM; clearing video-slot would destroy it permanently)
+      const rescueControls = document.getElementById('parent-controls-container');
+      const safeParent = document.getElementById('controls-wrapper');
+      if (rescueControls && safeParent && rescueControls.parentNode !== safeParent) {
+        safeParent.appendChild(rescueControls);
       }
       const isTizenOSCheck = false;
       if (!isTizenOSCheck) {

@@ -27,6 +27,27 @@ API_KEYS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_ke
 
 ADULT_REGEX = r"(?i)\b(porn|porno|xxx|erotic|erotica|hentai|nsfw|nudity|onlyfans|softcore|hardcore|fetish|ullu|kooku|primeplay|hotshots|besharams|voovi|moodx|jav|playboy|lust\s*stories|rabbit\s*movies|hunters\s*app|chikooflix|redprime|sexy\s*scenes)\b"
 
+# Rate limiting
+rate_limit_store = {}  # {ip: {"count": N, "window_start": timestamp}}
+rate_limit_lock = threading.Lock()
+
+def check_rate_limit(ip, max_requests=120, window_seconds=60):
+    """Returns True if request is allowed, False if rate-limited."""
+    now = time.time()
+    with rate_limit_lock:
+        if ip not in rate_limit_store:
+            rate_limit_store[ip] = {"count": 1, "window_start": now}
+            return True
+        entry = rate_limit_store[ip]
+        if now - entry["window_start"] > window_seconds:
+            entry["count"] = 1
+            entry["window_start"] = now
+            return True
+        entry["count"] += 1
+        if entry["count"] > max_requests:
+            return False
+        return True
+
 def is_adult(title, genre=None, desc=None):
     import re
     if title and re.search(ADULT_REGEX, str(title)):
@@ -345,9 +366,29 @@ def build_home_feed(tab="all"):
 class MultiCyberServer(SimpleHTTPRequestHandler):
 
     def end_headers(self):
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Admin-Email, Range, User-Agent, X-Ayush-Internal")
+        # CORS: Only allow specific origins instead of wildcard
+        origin = self.headers.get("Origin", "")
+        allowed_origins = [
+            "https://ayush.ai.studio", "https://flix.ayush.ai.studio",
+            "https://music.ayush.ai.studio", "https://api.ayush.ai.studio",
+            "http://localhost:3000", "http://127.0.0.1:3000"
+        ]
+        if origin in allowed_origins:
+            self.send_header("Access-Control-Allow-Origin", origin)
+        elif not origin or "localhost" in origin or "127.0.0.1" in origin:
+            self.send_header("Access-Control-Allow-Origin", origin or "*")
+        else:
+            self.send_header("Access-Control-Allow-Origin", "https://ayush.ai.studio")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key, X-Admin-Email, Range, X-Ayush-Internal")
+        self.send_header("Access-Control-Max-Age", "86400")
+        # Security headers
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("X-XSS-Protection", "1; mode=block")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        self.send_header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         super().end_headers()
 
     def do_OPTIONS(self):
@@ -363,12 +404,20 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def serve_static_file(self, filepath, content_type="text/html; charset=utf-8"):
-        if not os.path.isfile(filepath):
+        # Path traversal protection
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        abs_path = os.path.normpath(os.path.join(base_dir, filepath))
+        if not abs_path.startswith(base_dir):
+            self.send_response(403)
+            self.end_headers()
+            self.wfile.write(b"403 Forbidden")
+            return
+        if not os.path.isfile(abs_path):
             self.send_response(404)
             self.end_headers()
             self.wfile.write(b"404 Not Found")
             return
-        with open(filepath, "rb") as f:
+        with open(abs_path, "rb") as f:
             data = f.read()
         self.send_response(200)
         self.send_header("Content-Type", content_type)
@@ -416,10 +465,8 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
 
     def check_admin_auth(self, body_json=None):
         auth_hdr = self.headers.get("Authorization", "")
-        admin_email_hdr = self.headers.get("X-Admin-Email", "").lower()
-        if admin_email_hdr == ADMIN_EMAIL.lower():
-            return True
 
+        # Only accept Firebase JWT Bearer token with verified admin email
         if auth_hdr.startswith("Bearer "):
             token = auth_hdr.split(" ", 1)[1]
             try:
@@ -429,14 +476,14 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
                     p_b64 = parts[1] + ("=" * (4 - pad) if pad else "")
                     payload = json.loads(base64.urlsafe_b64decode(p_b64).decode("utf-8", errors="replace"))
                     email = (payload.get("email") or "").lower()
+                    # Verify token is not expired
+                    exp = payload.get("exp", 0)
+                    if exp and exp < time.time():
+                        return False
                     if email == ADMIN_EMAIL.lower():
                         return True
             except Exception:
                 pass
-
-        if body_json and isinstance(body_json, dict):
-            if body_json.get("admin_email", "").lower() == ADMIN_EMAIL.lower():
-                return True
 
         return False
 
@@ -445,6 +492,14 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
         qs = urllib.parse.parse_qs(parsed.query)
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+
+        # Rate limiting for API endpoints
+        if path.startswith("/api/"):
+            limit = 15 if path.startswith("/api/admin/") else 120
+            if not check_rate_limit(client_ip, max_requests=limit, window_seconds=60):
+                self.send_json({"status": "error", "code": 429, "message": "Too many requests. Please slow down."}, status=429)
+                return
 
         # ----------------------------------------------------------------------
         # 1. Host-Based Subdomain Routing
@@ -588,6 +643,12 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
     def do_POST(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        # Rate limit admin POST endpoints (15 req/min)
+        if path.startswith("/api/admin/"):
+            if not check_rate_limit(client_ip, max_requests=15, window_seconds=60):
+                self.send_json({"status": "error", "code": 429, "message": "Too many requests."}, status=429)
+                return
         length = int(self.headers.get("Content-Length", 0))
         body_bytes = self.rfile.read(length) if length > 0 else b""
         body_json = {}
@@ -829,27 +890,36 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         self.send_json({"error": "TMDB proxy request failed"}, status=502)
 
     def handle_api_tmdb_image(self, img_path, size="w500"):
-        if not img_path:
+        if not img_path or img_path.strip() in ("", "/", "null", "undefined", "None"):
             self.send_response(400); self.end_headers(); return
-        clean_path = img_path if img_path.startswith("/") else f"/{img_path}"
-        if not size:
+        clean_path = img_path.strip()
+        if not clean_path.startswith("/"):
+            clean_path = f"/{clean_path}"
+        # Validate path looks like a TMDB image path
+        if not clean_path.endswith((".jpg", ".png", ".svg", ".webp")):
+            clean_path += ".jpg"  # TMDB paths always end with extension
+        allowed_sizes = {"w45","w92","w154","w185","w300","w342","w500","w780","w1280","h632","original"}
+        if size not in allowed_sizes:
             size = "w500"
 
         target_url = f"https://image.tmdb.org/t/p/{size}{clean_path}"
         fallback_url = f"https://wsrv.nl/?url=https://image.tmdb.org/t/p/{size}{clean_path}"
+        fallback_url2 = f"https://wsrv.nl/?url=https://image.tmdb.org/t/p/{size}{clean_path}&output=jpg&q=85"
 
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
         }
 
-        for u in [target_url, fallback_url]:
+        for u in [target_url, fallback_url, fallback_url2]:
             try:
                 req = urllib.request.Request(u, headers=headers)
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                with urllib.request.urlopen(req, timeout=12) as resp:
                     if resp.status == 200:
                         content_type = resp.headers.get("Content-Type", "image/jpeg")
                         data = resp.read()
+                        if len(data) < 100:  # Too small, likely an error page
+                            continue
                         self.send_response(200)
                         self.send_header("Content-Type", content_type)
                         self.send_header("Content-Length", str(len(data)))
