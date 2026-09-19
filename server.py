@@ -18,10 +18,18 @@ import urllib.parse
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from concurrent.futures import ThreadPoolExecutor
+import uuid
 
 PORT = int(os.environ.get("PORT", 3000))
 SECRET_KEY = base64.b64decode("NzZpUmwwN3MweFNOOWpxbUVXQXQ3OUVCSlp1bElRSXNWNjRGWnIyTw==").decode("utf-8")
-BASE_URL = "https://api3.aoneroom.com"
+API_DOMAINS = [
+    "https://api3.aoneroom.com",
+    "https://apig.inmoviebox.com",
+    "https://api.inmoviebox.com"
+]
+BASE_URL = API_DOMAINS[0]
+DEVICE_ID = os.environ.get("DEVICE_ID") or secrets.token_hex(16)
+GAID = os.environ.get("GAID") or str(uuid.uuid4())
 ADMIN_EMAIL = "canwingamers@gmail.com"
 API_KEYS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_keys.json")
 
@@ -147,29 +155,56 @@ def get_token(force=False):
         now = time.time()
         if not force and token_cache["token"] and (now - token_cache["ts"]) < 3600:
             return token_cache["token"]
-        u = f"{BASE_URL}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
-        req = urllib.request.Request(u, headers=get_api_headers(u))
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                t = json.loads(resp.headers.get("x-user", "{}")).get("token")
-                if t:
-                    token_cache["token"] = t
-                    token_cache["ts"] = now
-                    return t
-        except Exception as e:
-            print(f"[WARN] Token refresh failed: {e}", flush=True)
+        
+        # Try fetching token across all upstream domains
+        for domain in API_DOMAINS:
+            u = f"{domain}/wefeed-mobile-bff/tab/ranking-list?tabId=0&categoryType=4516404531735022304&page=1&perPage=1"
+            req = urllib.request.Request(u, headers=get_api_headers(u))
+            try:
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    t = json.loads(resp.headers.get("x-user", "{}")).get("token")
+                    if t:
+                        token_cache["token"] = t
+                        token_cache["ts"] = now
+                        return t
+            except Exception as e:
+                print(f"[WARN] Token refresh failed on {domain}: {e}", flush=True)
+
         return token_cache.get("token") or ""
 
 def get_api_headers(url, method="GET", body="", token=None):
     now = int(time.time() * 1000)
     ct = "application/json"
+    client_info = json.dumps({
+        "package_name": "com.community.mbox.in",
+        "version_name": "4.0.02.0831.03",
+        "version_code": 50020126,
+        "os": "android",
+        "os_version": "14",
+        "install_ch": "official",
+        "device_id": DEVICE_ID,
+        "install_store": "official",
+        "gaid": GAID,
+        "brand": "Google",
+        "model": "Pixel 8",
+        "system_language": "en",
+        "net": "NETWORK_WIFI",
+        "region": "US",
+        "timezone": "America/New_York",
+        "sp_code": "",
+        "X-Play-Mode": "1",
+        "X-Idle-Data": "1",
+        "X-Family-Mode": "0",
+        "X-Content-Mode": "0"
+    }, separators=(',', ':'))
+
     h = {
         "user-agent": "com.community.mbox.in/50020126 (Linux; U; Android 14; en_US; Pixel 8; Build/UD1A.230803.041; Cronet/145.0.7582.0)",
         "accept": "application/json",
         "content-type": ct,
         "x-client-token": get_x_client_token(now),
         "x-tr-signature": generate_signature(method, "application/json", ct, url, body, now),
-        "x-client-info": '{"package_name":"com.community.mbox.in","version_name":"4.0.02.0831.03","version_code":50020126,"os":"android","os_version":"14","install_ch":"official","device_id":"1234567890abcdef1234567890abcdef","install_store":"official","gaid":"1b2212c1-dadf-43c3-a0c8-bd6ce48ae22d","brand":"Google","model":"Pixel 8","system_language":"en","net":"NETWORK_WIFI","region":"US","timezone":"America/New_York","sp_code":"","X-Play-Mode":"1","X-Idle-Data":"1","X-Family-Mode":"0","X-Content-Mode":"0"}',
+        "x-client-info": client_info,
         "x-client-status": "0"
     }
     t = token if token is not None else token_cache.get("token")
@@ -177,22 +212,48 @@ def get_api_headers(url, method="GET", body="", token=None):
         h["Authorization"] = f"Bearer {t}"
     return h
 
-def api_request(url, method="GET", body="", timeout=15):
+def api_request(url, method="GET", body="", timeout=12):
+    # Extract path and query so we can failover across all domains
+    if "://" in url:
+        parsed_target = urllib.parse.urlparse(url)
+        path_and_query = parsed_target.path + ("?" + parsed_target.query if parsed_target.query else "")
+    else:
+        path_and_query = url if url.startswith("/") else f"/{url}"
+
     token = get_token()
-    headers = get_api_headers(url, method=method, body=body, token=token)
-    data = body.encode("utf-8") if body else None
-    req = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 441):
-            token = get_token(force=True)
-            headers = get_api_headers(url, method=method, body=body, token=token)
-            req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    last_err = None
+
+    for domain in API_DOMAINS:
+        target_url = f"{domain}{path_and_query}"
+        headers = get_api_headers(target_url, method=method, body=body, token=token)
+        data = body.encode("utf-8") if body else None
+        req = urllib.request.Request(target_url, data=data, headers=headers, method=method)
+        try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
-        raise
+        except urllib.error.HTTPError as e:
+            last_err = e
+            # If 401, 403, or 441, token might be expired or rejected; force-refresh token and retry this domain once
+            if e.code in (401, 403, 441):
+                try:
+                    token = get_token(force=True)
+                    headers = get_api_headers(target_url, method=method, body=body, token=token)
+                    req = urllib.request.Request(target_url, data=data, headers=headers, method=method)
+                    with urllib.request.urlopen(req, timeout=timeout) as resp:
+                        return json.loads(resp.read().decode("utf-8"))
+                except Exception as retry_err:
+                    last_err = retry_err
+                    print(f"[WARN] Retrying {target_url} after token refresh failed: {retry_err}", flush=True)
+            print(f"[WARN] Domain {domain} returned HTTP {e.code}, failing over to next domain...", flush=True)
+            continue
+        except Exception as e:
+            last_err = e
+            print(f"[WARN] Domain {domain} request failed: {e}, failing over to next domain...", flush=True)
+            continue
+
+    if last_err:
+        raise last_err
+    raise Exception("All upstream MovieBox API endpoints failed to respond")
 
 # API Key Management
 api_keys_lock = threading.Lock()
