@@ -1,4 +1,8 @@
 {
+  "settings": {
+    "default_api_rate_limit": 120,
+    "admin_rate_limit": 15
+  },
   "keys": [
     {
       "id": "key_dev_master_01",
@@ -6,8 +10,9 @@
       "name": "Master Developer Key",
       "created_at": "2026-09-19T04:30:00Z",
       "status": "active",
-      "requests_count": 5,
-      "last_used_at": "2026-09-18T23:35:41.440329Z"
+      "rate_limit": 120,
+      "requests_count": 6,
+      "last_used_at": "2026-09-19T19:08:15.275298Z"
     }
   ]
 }

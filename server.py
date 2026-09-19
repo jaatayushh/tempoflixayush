@@ -27,18 +27,20 @@ API_KEYS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "api_ke
 
 ADULT_REGEX = r"(?i)\b(porn|porno|xxx|erotic|erotica|hentai|nsfw|nudity|onlyfans|softcore|hardcore|fetish|ullu|kooku|primeplay|hotshots|besharams|voovi|moodx|jav|playboy|lust\s*stories|rabbit\s*movies|hunters\s*app|chikooflix|redprime|sexy\s*scenes)\b"
 
-# Rate limiting
-rate_limit_store = {}  # {ip: {"count": N, "window_start": timestamp}}
+# Rate limiting & Telemetry
+rate_limit_store = {}  # {identifier: {"count": N, "window_start": timestamp}}
 rate_limit_lock = threading.Lock()
+key_request_logs = {}  # key_id -> list of recent log dicts (max 50)
+key_logs_lock = threading.Lock()
 
-def check_rate_limit(ip, max_requests=120, window_seconds=60):
+def check_rate_limit(identifier, max_requests=120, window_seconds=60):
     """Returns True if request is allowed, False if rate-limited."""
     now = time.time()
     with rate_limit_lock:
-        if ip not in rate_limit_store:
-            rate_limit_store[ip] = {"count": 1, "window_start": now}
+        if identifier not in rate_limit_store:
+            rate_limit_store[identifier] = {"count": 1, "window_start": now}
             return True
-        entry = rate_limit_store[ip]
+        entry = rate_limit_store[identifier]
         if now - entry["window_start"] > window_seconds:
             entry["count"] = 1
             entry["window_start"] = now
@@ -47,6 +49,41 @@ def check_rate_limit(ip, max_requests=120, window_seconds=60):
         if entry["count"] > max_requests:
             return False
         return True
+
+def get_rate_limit_usage(identifier, max_requests=120, window_seconds=60):
+    """Returns (current_count, max_requests, remaining, reset_in_seconds)"""
+    now = time.time()
+    with rate_limit_lock:
+        entry = rate_limit_store.get(identifier)
+        if not entry:
+            return 0, max_requests, max_requests, window_seconds
+        elapsed = now - entry["window_start"]
+        if elapsed > window_seconds:
+            return 0, max_requests, max_requests, window_seconds
+        current = entry["count"]
+        rem = max(0, max_requests - current)
+        reset_in = max(0, int(window_seconds - elapsed))
+        return current, max_requests, rem, reset_in
+
+def record_key_log(key_id, endpoint, method, status, client_ip, time_ms=0):
+    with key_logs_lock:
+        if key_id not in key_request_logs:
+            key_request_logs[key_id] = []
+        path_only = endpoint.split("?")[0] if endpoint else "/"
+        query_only = endpoint.split("?", 1)[1] if "?" in endpoint else ""
+        masked_ip = client_ip[:12] + "..." if len(client_ip) > 12 else client_ip
+        key_request_logs[key_id].insert(0, {
+            "timestamp": datetime.datetime.utcnow().strftime("%H:%M:%S"),
+            "full_time": datetime.datetime.utcnow().isoformat() + "Z",
+            "endpoint": path_only,
+            "query": query_only,
+            "method": method,
+            "status": status,
+            "ip": masked_ip,
+            "time_ms": max(1, int(time_ms))
+        })
+        if len(key_request_logs[key_id]) > 50:
+            key_request_logs[key_id].pop()
 
 def is_adult(title, genre=None, desc=None):
     import re
@@ -170,33 +207,54 @@ def load_api_keys():
                     "name": "Master Developer Key",
                     "created_at": datetime.datetime.utcnow().isoformat() + "Z",
                     "status": "active",
+                    "rate_limit": 120,
                     "requests_count": 0,
                     "last_used_at": None
-                }]
+                }],
+                "settings": {
+                    "default_api_rate_limit": 120,
+                    "admin_rate_limit": 15
+                }
             }
             with open(API_KEYS_FILE, "w", encoding="utf-8") as f:
                 json.dump(default_data, f, indent=2)
             return default_data
         try:
             with open(API_KEYS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                # Ensure settings and rate_limit exist on all keys
+                if "settings" not in data:
+                    data["settings"] = {"default_api_rate_limit": 120, "admin_rate_limit": 15}
+                for k in data.get("keys", []):
+                    if "rate_limit" not in k:
+                        k["rate_limit"] = 120
+                return data
         except Exception:
-            return {"keys": []}
+            return {"keys": [], "settings": {"default_api_rate_limit": 120, "admin_rate_limit": 15}}
 
 def save_api_keys(data):
     with api_keys_lock:
         with open(API_KEYS_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
 
-def track_api_key_usage(key_str):
+def track_api_key_usage(key_str, client_ip="unknown", endpoint="/api", method="GET", time_ms=10):
     data = load_api_keys()
     for k in data.get("keys", []):
         if k.get("key") == key_str:
             if k.get("status") != "active":
+                record_key_log(k["id"], endpoint, method, 403, client_ip, time_ms)
                 return False, "revoked"
+            # Per-key rate limit enforcement
+            key_limit = k.get("rate_limit", 120)
+            rate_key = f"key_{k['id']}"
+            if not check_rate_limit(rate_key, max_requests=key_limit, window_seconds=60):
+                record_key_log(k["id"], endpoint, method, 429, client_ip, time_ms)
+                return False, "rate_limited"
+
             k["requests_count"] = k.get("requests_count", 0) + 1
             k["last_used_at"] = datetime.datetime.utcnow().isoformat() + "Z"
             save_api_keys(data)
+            record_key_log(k["id"], endpoint, method, 200, client_ip, time_ms)
             return True, k
     return False, "not_found"
 
@@ -366,14 +424,18 @@ def build_home_feed(tab="all"):
 class MultiCyberServer(SimpleHTTPRequestHandler):
 
     def end_headers(self):
-        # CORS: Only allow specific origins instead of wildcard
         origin = self.headers.get("Origin", "")
+        parsed_path = urllib.parse.urlparse(self.path).path
         allowed_origins = [
             "https://ayush.ai.studio", "https://flix.ayush.ai.studio",
             "https://music.ayush.ai.studio", "https://api.ayush.ai.studio",
+            "https://dev.ayush.ai.studio",
             "http://localhost:3000", "http://127.0.0.1:3000"
         ]
-        if origin in allowed_origins:
+        # For public API data calls, allow cross-origin requests
+        if parsed_path.startswith("/api/") and not parsed_path.startswith("/api/admin/"):
+            self.send_header("Access-Control-Allow-Origin", origin or "*")
+        elif origin in allowed_origins or (origin and (origin.endswith(".onrender.com") or origin.endswith(".ayush.ai.studio") or origin.endswith(".ai.studio"))):
             self.send_header("Access-Control-Allow-Origin", origin)
         elif not origin or "localhost" in origin or "127.0.0.1" in origin:
             self.send_header("Access-Control-Allow-Origin", origin or "*")
@@ -427,18 +489,21 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
 
     def check_api_key_auth(self, qs):
         host = self.headers.get("Host", "").lower().split(":")[0]
+        client_ip = self.client_address[0] if self.client_address else "unknown"
+        api_key = self.headers.get("X-API-Key") or qs.get("api_key", [""])[0] or qs.get("key", [""])[0]
 
-        # 1. If accessing via the public API domain (api.ayush.ai.studio), an API key is STRICTLY required!
-        if host.startswith("api."):
-            api_key = self.headers.get("X-API-Key") or qs.get("api_key", [""])[0] or qs.get("key", [""])[0]
-            if not api_key:
-                return False, "missing"
-            ok, result = track_api_key_usage(api_key.strip())
+        # 1. If an API key is provided, ALWAYS authenticate, rate-limit, and track telemetry for it!
+        if api_key:
+            ok, result = track_api_key_usage(api_key.strip(), client_ip=client_ip, endpoint=self.path, method="GET")
             if ok:
                 return True, result
             return False, result
 
-        # 2. For the website frontends (flix.ayush.ai.studio, music.ayush.ai.studio, localhost):
+        # 2. If accessing via the public API domain (api.ayush.ai.studio or api-* or api.*), API key is strictly required!
+        if host.startswith("api.") or host.startswith("api-"):
+            return False, "missing"
+
+        # 3. For the website frontends (flix, music, dev, localhost, onrender.com):
         ref = self.headers.get("Referer", "").lower()
         origin = self.headers.get("Origin", "").lower()
         sec_fetch = self.headers.get("Sec-Fetch-Site", "").lower()
@@ -447,21 +512,14 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         if internal_hdr == "1" or sec_fetch in ("same-origin", "same-site"):
             return True, {"name": "Internal Client", "status": "active"}
 
-        if any(d in host for d in ["localhost", "127.0.0.1", "flix.", "music."]) or (host.endswith("ayush.ai.studio") and not host.startswith("api.")):
+        if any(d in host for d in ["localhost", "127.0.0.1", "flix.", "music.", "dev."]) or (host.endswith("ayush.ai.studio") and not host.startswith("api.")):
             return True, {"name": "Web UI Client", "status": "active"}
 
-        if any(d in ref for d in ["localhost", "127.0.0.1", "ayush.ai.studio"]) or any(d in origin for d in ["localhost", "127.0.0.1", "ayush.ai.studio"]):
+        if any(d in ref for d in ["localhost", "127.0.0.1", "ayush.ai.studio", "onrender.com"]) or any(d in origin for d in ["localhost", "127.0.0.1", "ayush.ai.studio", "onrender.com"]):
             return True, {"name": "Internal Client", "status": "active"}
 
-        # 3. Any other direct external caller requires a valid API key
-        api_key = self.headers.get("X-API-Key") or qs.get("api_key", [""])[0] or qs.get("key", [""])[0]
-        if not api_key:
-            return False, "missing"
-
-        ok, result = track_api_key_usage(api_key.strip())
-        if ok:
-            return True, result
-        return False, result
+        # 4. Any other direct external caller requires a valid API key
+        return False, "missing"
 
     def check_admin_auth(self, body_json=None):
         auth_hdr = self.headers.get("Authorization", "")
@@ -516,6 +574,9 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         if host.startswith("api.") and path in ["", "/"]:
             return self.serve_static_file("static/api.html")
 
+        if (host.startswith("dev.") or host.startswith("dev-")) and (path in ["", "/", "/dashboard"] or path.startswith("/dev/")):
+            return self.serve_static_file("static/dev.html")
+
         # ----------------------------------------------------------------------
         # 2. Path-Based Navigation
         # ----------------------------------------------------------------------
@@ -524,6 +585,9 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
 
         if path in ["/admin", "/admin/"]:
             return self.serve_static_file("static/admin.html")
+
+        if path in ["/dev", "/dev/", "/dev/dashboard"] or path.startswith("/dev/"):
+            return self.serve_static_file("static/dev.html")
 
         if path in ["/flix", "/flix/", "/watch", "/watch/"]:
             return self.serve_static_file("static/watch.html")
@@ -570,11 +634,22 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
             return self.send_json({
                 "status": "success",
                 "keys": keys_data.get("keys", []),
+                "settings": keys_data.get("settings", {"default_api_rate_limit": 120, "admin_rate_limit": 15}),
                 "stats": {
                     "total_keys": len(keys_data.get("keys", [])),
                     "active_keys": active_cnt,
                     "total_requests": total_reqs
                 }
+            })
+
+        if path == "/api/admin/settings":
+            if not self.check_admin_auth():
+                self.send_json({"status": "error", "message": "Admin authorization required (canwingamers@gmail.com)"}, status=403)
+                return
+            keys_data = load_api_keys()
+            return self.send_json({
+                "status": "success",
+                "settings": keys_data.get("settings", {"default_api_rate_limit": 120, "admin_rate_limit": 15})
             })
 
         # ----------------------------------------------------------------------
@@ -592,9 +667,21 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         # 6. JSON REST API Endpoints (Protected by API Key for external calls)
         # ----------------------------------------------------------------------
         if path.startswith("/api/"):
+            if path == "/api/dev/stats":
+                api_key = self.headers.get("X-API-Key") or qs.get("key", [""])[0] or qs.get("api_key", [""])[0]
+                return self.handle_api_dev_stats(api_key)
+
             if not path.startswith("/api/admin/") and path != "/api/tmdb/image":
                 is_auth, key_info = self.check_api_key_auth(qs)
                 if not is_auth:
+                    if key_info == "rate_limited":
+                        self.send_json({
+                            "status": "error",
+                            "code": 429,
+                            "error": "Too Many Requests",
+                            "message": "Rate limit exceeded for this API key. Please slow down or request a quota increase from admin."
+                        }, status=429)
+                        return
                     self.send_json({
                         "status": "error",
                         "code": 401,
@@ -658,6 +745,11 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         except Exception:
             pass
 
+        # Developer Portal Stats
+        if path == "/api/dev/stats":
+            api_key = self.headers.get("X-API-Key") or body_json.get("key", "") or body_json.get("api_key", "")
+            return self.handle_api_dev_stats(api_key)
+
         # Admin Actions
         if path.startswith("/api/admin/"):
             if not self.check_admin_auth(body_json):
@@ -666,11 +758,13 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
 
             if path == "/api/admin/keys/create":
                 name = body_json.get("name", "New API Key").strip() or "Unnamed Key"
+                rate_limit = int(body_json.get("rate_limit", 120))
                 data = load_api_keys()
                 new_key = {
                     "id": f"key_{secrets.token_hex(6)}",
                     "key": f"ayush_live_{secrets.token_hex(16)}",
                     "name": name,
+                    "rate_limit": rate_limit,
                     "created_at": datetime.datetime.utcnow().isoformat() + "Z",
                     "status": "active",
                     "requests_count": 0,
@@ -679,6 +773,34 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
                 data.setdefault("keys", []).append(new_key)
                 save_api_keys(data)
                 self.send_json({"status": "success", "key": new_key})
+                return
+
+            if path == "/api/admin/keys/rate-limit":
+                key_id = body_json.get("id")
+                new_limit = int(body_json.get("rate_limit", 120))
+                data = load_api_keys()
+                updated = False
+                for k in data.get("keys", []):
+                    if k.get("id") == key_id:
+                        k["rate_limit"] = new_limit
+                        updated = True
+                        break
+                if updated:
+                    save_api_keys(data)
+                    self.send_json({"status": "success", "message": f"Rate limit updated to {new_limit} req/min"})
+                else:
+                    self.send_json({"status": "error", "message": "Key not found"}, status=404)
+                return
+
+            if path == "/api/admin/settings":
+                data = load_api_keys()
+                settings = data.setdefault("settings", {"default_api_rate_limit": 120, "admin_rate_limit": 15})
+                if "default_api_rate_limit" in body_json:
+                    settings["default_api_rate_limit"] = int(body_json["default_api_rate_limit"])
+                if "admin_rate_limit" in body_json:
+                    settings["admin_rate_limit"] = int(body_json["admin_rate_limit"])
+                save_api_keys(data)
+                self.send_json({"status": "success", "settings": settings, "message": "System rate limits updated successfully"})
                 return
 
             if path == "/api/admin/keys/toggle":
@@ -713,6 +835,46 @@ class MultiCyberServer(SimpleHTTPRequestHandler):
         self.send_json({"status": "error", "message": "Endpoint not found"}, status=404)
 
     # --- API HANDLERS ---
+    def handle_api_dev_stats(self, api_key):
+        if not api_key:
+            self.send_json({"status": "error", "code": 401, "message": "Missing API Key. Please provide ?key= or X-API-Key header."}, status=401)
+            return
+        data = load_api_keys()
+        matched_key = None
+        for k in data.get("keys", []):
+            if k.get("key") == api_key.strip():
+                matched_key = k
+                break
+        if not matched_key:
+            self.send_json({"status": "error", "code": 401, "message": "Invalid API Key. Verify your credentials."}, status=401)
+            return
+
+        rate_limit = matched_key.get("rate_limit", 120)
+        current_used, max_req, remaining, reset_in = get_rate_limit_usage(f"key_{matched_key['id']}", max_requests=rate_limit, window_seconds=60)
+        with key_logs_lock:
+            logs = list(key_request_logs.get(matched_key["id"], []))
+
+        self.send_json({
+            "status": "success",
+            "key": {
+                "id": matched_key["id"],
+                "name": matched_key.get("name", "Developer Key"),
+                "key": matched_key["key"],
+                "status": matched_key.get("status", "active"),
+                "rate_limit": rate_limit,
+                "requests_count": matched_key.get("requests_count", 0),
+                "created_at": matched_key.get("created_at"),
+                "last_used_at": matched_key.get("last_used_at")
+            },
+            "quota": {
+                "limit_rpm": rate_limit,
+                "current_rpm": current_used,
+                "remaining_rpm": remaining,
+                "reset_in_seconds": reset_in
+            },
+            "recent_logs": logs
+        })
+
     def handle_api_home(self, tab="all"):
         now = time.time()
         cached = home_cache.get(tab)
@@ -1150,6 +1312,7 @@ def run():
     print(f"  - Ayushflix:  http://localhost:{PORT}/watch  (flix.ayush.ai.studio)", flush=True)
     print(f"  - AyushMuzic: http://localhost:{PORT}/music  (music.ayush.ai.studio)", flush=True)
     print(f"  - Stream API: http://localhost:{PORT}/api    (api.ayush.ai.studio)", flush=True)
+    print(f"  - Dev Portal: http://localhost:{PORT}/dev    (dev.ayush.ai.studio)", flush=True)
     print(f"===========================================================", flush=True)
     try:
         httpd.serve_forever()

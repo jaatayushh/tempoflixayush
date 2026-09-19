@@ -13,32 +13,67 @@
       --neon-red: #FF2B2B;
       --neon-purple: #8b00ff;
       --bg-dark: #050508;
-      --card-dark: #0e0e14;
+      --card-dark: #0c0d14;
     }
     body {
       background-color: var(--bg-dark);
       color: #fff;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       min-height: 100vh;
+      overflow-x: hidden;
     }
     .hud-border {
       border: 1px solid rgba(204, 255, 0, 0.3);
-      box-shadow: 0 0 15px rgba(204, 255, 0, 0.08);
+      box-shadow: 0 0 20px rgba(204, 255, 0, 0.08);
     }
     .hud-border-cyan {
       border: 1px solid rgba(0, 245, 255, 0.3);
-      box-shadow: 0 0 15px rgba(0, 245, 255, 0.08);
+      box-shadow: 0 0 20px rgba(0, 245, 255, 0.08);
     }
-    .glow-yellow { text-shadow: 0 0 8px rgba(204, 255, 0, 0.6); }
-    .glow-cyan { text-shadow: 0 0 8px rgba(0, 245, 255, 0.6); }
+    .glow-yellow { text-shadow: 0 0 10px rgba(204, 255, 0, 0.7); }
+    .glow-cyan { text-shadow: 0 0 10px rgba(0, 245, 255, 0.7); }
     .bg-grid {
       background-image: linear-gradient(rgba(204, 255, 0, 0.03) 1px, transparent 1px),
                         linear-gradient(90deg, rgba(204, 255, 0, 0.03) 1px, transparent 1px);
       background-size: 32px 32px;
     }
+    @keyframes pulse-slow {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.98); }
+    }
+    .pulse-anim { animation: pulse-slow 3s infinite ease-in-out; }
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    .skeleton {
+      background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.03) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+    }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.4); }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(204,255,0,0.2); border-radius: 4px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(204,255,0,0.5); }
   </style>
 </head>
-<body class="bg-grid flex flex-col justify-between">
+<body class="bg-grid flex flex-col justify-between min-h-screen">
+
+  <!-- Full-Screen Preloader -->
+  <div id="admin-preloader" class="fixed inset-0 z-50 bg-[#050508] flex flex-col items-center justify-center gap-6 transition-opacity duration-500">
+    <div class="relative w-20 h-20 flex items-center justify-center">
+      <div class="absolute inset-0 rounded-full border-2 border-[var(--neon-yellow)]/20 border-t-[var(--neon-yellow)] animate-spin"></div>
+      <div class="absolute inset-2 rounded-full border-2 border-[var(--neon-cyan)]/20 border-b-[var(--neon-cyan)] animate-spin" style="animation-direction: reverse; animation-duration: 1.5s;"></div>
+      <i data-feather="shield" class="w-7 h-7 text-[var(--neon-yellow)]"></i>
+    </div>
+    <div class="text-center space-y-1">
+      <div class="text-xs font-black tracking-widest text-[var(--neon-yellow)] glow-yellow">AYUSH_SECURITY_CORE</div>
+      <div id="preloader-text" class="text-[11px] text-gray-400 font-mono tracking-wider">INITIALIZING BIOMETRIC GATEWAY...</div>
+    </div>
+  </div>
+
+  <!-- Cyberpunk Floating Toast Container -->
+  <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full"></div>
 
   <!-- Header -->
   <header class="border-b border-white/10 bg-[#08080c]/90 backdrop-blur-md sticky top-0 z-40 px-6 py-4">
@@ -49,8 +84,11 @@
         <span class="text-xs px-2 py-0.5 rounded bg-white/10 text-gray-400">ADMIN // API_GOVERNANCE</span>
       </div>
       <div id="auth-header-state" class="flex items-center gap-4 text-xs">
-        <span id="user-display" class="text-gray-400">UNAUTHENTICATED</span>
-        <button id="logout-btn" class="hidden px-3 py-1.5 rounded border border-red-500/40 text-red-400 hover:bg-red-500/20 transition-all">
+        <span id="user-display" class="text-gray-400 font-mono">INITIALIZING...</span>
+        <a href="/dev" target="_blank" class="px-2.5 py-1 rounded bg-[rgba(0,245,255,0.1)] border border-[var(--neon-cyan)]/30 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)] hover:text-black transition-all flex items-center gap-1.5 font-bold">
+          <i data-feather="terminal" class="w-3.5 h-3.5"></i> DEV PORTAL
+        </a>
+        <button id="logout-btn" class="hidden px-3 py-1.5 rounded border border-red-500/40 text-red-400 hover:bg-red-500/20 transition-all font-bold">
           TERMINATE SESSION
         </button>
       </div>
@@ -61,7 +99,7 @@
   <main class="max-w-7xl mx-auto px-4 sm:px-6 py-8 flex-1 w-full space-y-8">
 
     <!-- Auth Guard Modal / Login Card -->
-    <div id="login-container" class="max-w-md mx-auto my-12 p-8 rounded-2xl bg-[#0e0e14] hud-border space-y-6">
+    <div id="login-container" class="hidden max-w-md mx-auto my-12 p-8 rounded-2xl bg-[#0c0d14] hud-border space-y-6">
       <div class="text-center space-y-2">
         <div class="inline-flex p-3 rounded-xl bg-[rgba(204,255,0,0.1)] text-[var(--neon-yellow)] mb-2">
           <i data-feather="shield" class="w-8 h-8"></i>
@@ -83,7 +121,8 @@
           <input type="password" id="admin-password" required placeholder="••••••••••••" class="w-full px-4 py-3 rounded-xl bg-black/60 border border-white/20 text-white focus:border-[var(--neon-yellow)] outline-none text-sm" />
         </div>
         <button type="submit" id="email-login-btn" class="w-full py-3 rounded-xl font-bold bg-[var(--neon-yellow)] text-black hover:bg-white transition-all text-sm flex items-center justify-center gap-2">
-          <i data-feather="lock" class="w-4 h-4"></i> AUTHENTICATE WITH CREDENTIALS
+          <span class="btn-icon"><i data-feather="lock" class="w-4 h-4"></i></span>
+          <span class="btn-text">AUTHENTICATE WITH CREDENTIALS</span>
         </button>
       </form>
 
@@ -100,7 +139,7 @@
           <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
           <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
         </svg>
-        SIGN IN WITH GOOGLE (canwingamers@gmail.com)
+        <span class="btn-text">SIGN IN WITH GOOGLE (canwingamers@gmail.com)</span>
       </button>
     </div>
 
@@ -109,70 +148,123 @@
 
       <!-- Telemetry Stats Grid -->
       <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div class="p-6 rounded-2xl bg-[#0e0e14] hud-border">
+        <div class="p-6 rounded-2xl bg-[#0c0d14] hud-border relative overflow-hidden">
           <div class="text-xs text-gray-400 font-bold mb-1">TOTAL REGISTERED KEYS</div>
           <div id="stat-total-keys" class="text-3xl font-black text-white glow-yellow">--</div>
           <div class="text-[11px] text-gray-500 mt-2">Active access points in database</div>
         </div>
-        <div class="p-6 rounded-2xl bg-[#0e0e14] hud-border-cyan">
+        <div class="p-6 rounded-2xl bg-[#0c0d14] hud-border-cyan relative overflow-hidden">
           <div class="text-xs text-gray-400 font-bold mb-1">ACTIVE KEYS READY</div>
           <div id="stat-active-keys" class="text-3xl font-black text-[var(--neon-cyan)] glow-cyan">--</div>
-          <div class="text-[11px] text-gray-500 mt-2">Authorized for API streaming</div>
+          <div class="text-[11px] text-gray-500 mt-2">Authorized for live API streaming</div>
         </div>
-        <div class="p-6 rounded-2xl bg-[#0e0e14] border border-white/20">
+        <div class="p-6 rounded-2xl bg-[#0c0d14] border border-white/20 relative overflow-hidden">
           <div class="text-xs text-gray-400 font-bold mb-1">TOTAL REQUESTS SERVED</div>
           <div id="stat-total-requests" class="text-3xl font-black text-[var(--neon-yellow)]">--</div>
           <div class="text-[11px] text-gray-500 mt-2">Cumulative live API hits tracked</div>
         </div>
       </div>
 
+      <!-- Global Rate Limits & Governance Configuration Card -->
+      <div class="p-6 rounded-2xl bg-[#0c0d14] border border-white/10 space-y-4">
+        <div class="flex items-center justify-between flex-wrap gap-4">
+          <div class="space-y-1">
+            <div class="flex items-center gap-2">
+              <i data-feather="sliders" class="w-4 h-4 text-[var(--neon-cyan)]"></i>
+              <h3 class="text-sm font-bold text-white tracking-wider">// GLOBAL RATE LIMIT GOVERNANCE</h3>
+            </div>
+            <p class="text-xs text-gray-400">Configure global request throttling windows per minute across all client tiers.</p>
+          </div>
+          <button id="save-settings-btn" class="px-4 py-2 rounded-xl bg-[rgba(0,245,255,0.1)] border border-[var(--neon-cyan)]/40 text-[var(--neon-cyan)] hover:bg-[var(--neon-cyan)] hover:text-black font-bold text-xs transition-all flex items-center gap-2">
+            <span class="btn-icon"><i data-feather="save" class="w-3.5 h-3.5"></i></span>
+            <span class="btn-text">APPLY RATE LIMITS</span>
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+          <div class="p-4 rounded-xl bg-black/40 border border-white/10 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-gray-300 font-bold">DEFAULT API RATE LIMIT (REQ / MIN)</span>
+              <span id="display-default-rpm" class="text-[var(--neon-cyan)] font-bold">120 RPM</span>
+            </div>
+            <p class="text-[11px] text-gray-500">Max requests per minute allowed per API key / IP for public stream endpoints.</p>
+            <input type="number" id="setting-default-rpm" min="10" max="10000" step="10" value="120" class="w-full px-3 py-2 rounded-lg bg-black/80 border border-white/20 text-white text-xs outline-none focus:border-[var(--neon-cyan)]" />
+          </div>
+
+          <div class="p-4 rounded-xl bg-black/40 border border-white/10 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="text-gray-300 font-bold">ADMIN ACTIONS RATE LIMIT (REQ / MIN)</span>
+              <span id="display-admin-rpm" class="text-[var(--neon-yellow)] font-bold">15 RPM</span>
+            </div>
+            <p class="text-[11px] text-gray-500">Brute-force protection throttle for key generation, deletion, and auth actions.</p>
+            <input type="number" id="setting-admin-rpm" min="5" max="600" step="5" value="15" class="w-full px-3 py-2 rounded-lg bg-black/80 border border-white/20 text-white text-xs outline-none focus:border-[var(--neon-yellow)]" />
+          </div>
+        </div>
+      </div>
+
       <!-- Create Key Section -->
-      <div class="p-6 rounded-2xl bg-[#0e0e14] hud-border flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+      <div class="p-6 rounded-2xl bg-[#0c0d14] hud-border flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
         <div class="space-y-1">
           <h2 class="text-lg font-bold text-white tracking-wide">GENERATE NEW SECURE API KEY</h2>
           <p class="text-xs text-gray-400">Keys are authenticated against /api/search, /api/streams, /api/home, and /api/details.</p>
         </div>
-        <div class="flex items-center gap-3 w-full md:w-auto">
-          <input type="text" id="new-key-name" placeholder="Client Name (e.g. My Mobile App)" class="px-4 py-2.5 rounded-xl bg-black/60 border border-white/20 text-white text-xs outline-none focus:border-[var(--neon-yellow)] w-full md:w-64" />
+        <div class="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+          <input type="text" id="new-key-name" placeholder="Client Name (e.g. AyushFlix App)" class="px-4 py-2.5 rounded-xl bg-black/60 border border-white/20 text-white text-xs outline-none focus:border-[var(--neon-yellow)] w-full sm:w-56" />
+          
+          <div class="flex items-center gap-1.5 bg-black/60 border border-white/20 rounded-xl px-3 py-1.5">
+            <span class="text-[11px] text-gray-400 font-mono">RPM:</span>
+            <input type="number" id="new-key-rpm" value="120" min="10" max="5000" step="10" title="Custom Rate Limit (req/min)" class="w-20 bg-transparent text-white text-xs outline-none font-bold text-[var(--neon-cyan)]" />
+          </div>
+
           <button id="create-key-btn" class="px-5 py-2.5 rounded-xl font-bold bg-[var(--neon-yellow)] text-black hover:bg-white text-xs whitespace-nowrap transition-all flex items-center gap-2">
-            <i data-feather="plus" class="w-4 h-4"></i> GENERATE KEY
+            <span class="btn-icon"><i data-feather="plus" class="w-4 h-4"></i></span>
+            <span class="btn-text">GENERATE KEY</span>
           </button>
         </div>
       </div>
 
       <!-- Keys Table -->
-      <div class="rounded-2xl bg-[#0e0e14] border border-white/10 overflow-hidden">
-        <div class="p-5 border-b border-white/10 flex items-center justify-between">
-          <h3 class="text-sm font-bold text-white tracking-wider">// ACTIVE API KEYS &amp; USAGE METRICS</h3>
-          <button id="refresh-keys-btn" class="px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-xs text-gray-300 flex items-center gap-1.5 transition-all">
-            <i data-feather="refresh-cw" class="w-3.5 h-3.5"></i> REFRESH
-          </button>
+      <div class="rounded-2xl bg-[#0c0d14] border border-white/10 overflow-hidden">
+        <div class="p-5 border-b border-white/10 flex items-center justify-between flex-wrap gap-4">
+          <div class="flex items-center gap-2">
+            <h3 class="text-sm font-bold text-white tracking-wider">// ACTIVE API KEYS &amp; USAGE METRICS</h3>
+            <span id="keys-count-badge" class="px-2 py-0.5 rounded-full text-[10px] bg-white/10 text-gray-400">0 KEYS</span>
+          </div>
+          <div class="flex items-center gap-3">
+            <button id="refresh-keys-btn" class="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs text-gray-300 flex items-center gap-1.5 transition-all">
+              <i data-feather="refresh-cw" class="w-3.5 h-3.5"></i> REFRESH
+            </button>
+          </div>
         </div>
 
-        <div class="overflow-x-auto">
+        <div class="overflow-x-auto custom-scrollbar">
           <table class="w-full text-left text-xs">
             <thead class="bg-black/40 text-gray-400 uppercase tracking-wider text-[11px] border-b border-white/5">
               <tr>
                 <th class="py-3 px-4">LABEL / NAME</th>
                 <th class="py-3 px-4">API KEY</th>
                 <th class="py-3 px-4">STATUS</th>
+                <th class="py-3 px-4">RATE LIMIT (RPM)</th>
                 <th class="py-3 px-4">CALLS SERVED</th>
                 <th class="py-3 px-4">LAST USED</th>
                 <th class="py-3 px-4 text-right">ACTIONS</th>
               </tr>
             </thead>
             <tbody id="keys-tbody" class="divide-y divide-white/5 font-mono">
-              <tr>
-                <td colspan="6" class="text-center py-8 text-gray-500">Loading access keys...</td>
-              </tr>
+              <!-- Dynamically populated or skeleton -->
             </tbody>
           </table>
         </div>
       </div>
 
       <!-- API Integration Guide -->
-      <div class="p-6 rounded-2xl bg-[#0e0e14] border border-white/10 space-y-4 text-xs">
-        <h3 class="text-sm font-bold text-[var(--neon-cyan)] tracking-wider glow-cyan">// DEVELOPER INTEGRATION PROTOCOL</h3>
+      <div class="p-6 rounded-2xl bg-[#0c0d14] border border-white/10 space-y-4 text-xs">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <h3 class="text-sm font-bold text-[var(--neon-cyan)] tracking-wider glow-cyan">// DEVELOPER INTEGRATION PROTOCOL</h3>
+          <a href="/dev" target="_blank" class="text-[11px] text-[var(--neon-yellow)] hover:underline flex items-center gap-1 font-bold">
+            OPEN DEVELOPER DASHBOARD <i data-feather="arrow-up-right" class="w-3.5 h-3.5"></i>
+          </a>
+        </div>
         <p class="text-gray-300">
           To authenticate with the streaming API, include your API key in the <code class="text-[var(--neon-yellow)] font-bold">X-API-Key</code> request header or as query parameter <code class="text-[var(--neon-yellow)] font-bold">?api_key=YOUR_KEY</code>.
         </p>
@@ -182,7 +274,7 @@
           <div class="p-4 rounded-xl bg-black/60 border border-white/10 space-y-2">
             <div class="text-gray-400 font-bold text-xs text-[var(--neon-yellow)]">cURL Request</div>
             <pre class="overflow-x-auto text-gray-300 leading-relaxed">curl -H "X-API-Key: YOUR_KEY" \
-  "http://api.ayush.ai.studio/api/search?q=batman"</pre>
+  "https://api.ayush.ai.studio/api/search?q=batman"</pre>
           </div>
 
           <!-- JavaScript -->
@@ -200,7 +292,7 @@ const data = await res.json();</pre>
             <pre class="overflow-x-auto text-gray-300 leading-relaxed">import requests
 headers = {"X-API-Key": "YOUR_KEY"}
 res = requests.get(
-  "http://api.ayush.ai.studio/api/search?q=batman",
+  "https://api.ayush.ai.studio/api/search?q=batman",
   headers=headers
 ).json()</pre>
           </div>
@@ -211,11 +303,44 @@ res = requests.get(
 
   </main>
 
-  <footer class="border-t border-white/10 px-6 py-4 text-center text-xs text-gray-500">
+  <footer class="border-t border-white/10 px-6 py-4 text-center text-xs text-gray-500 font-mono">
     AYUSH CONTROL ARCHITECTURE &bull; ALL RIGHTS RESERVED &bull; AUTHORIZED ACCESS ONLY
   </footer>
 
-  <!-- Firebase Integration -->
+  <!-- Edit Rate Limit Modal -->
+  <div id="rate-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-[#0c0d14] hud-border rounded-2xl max-w-sm w-full p-6 space-y-5">
+      <div class="flex items-center justify-between border-b border-white/10 pb-3">
+        <div class="flex items-center gap-2">
+          <i data-feather="sliders" class="w-4 h-4 text-[var(--neon-cyan)]"></i>
+          <span class="text-xs font-bold text-white tracking-wider">CONFIG RATE LIMIT</span>
+        </div>
+        <button onclick="window.closeRateModal()" class="text-gray-400 hover:text-white">&times;</button>
+      </div>
+      <div>
+        <p class="text-xs text-gray-400 mb-1">KEY LABEL:</p>
+        <p id="modal-key-name" class="text-xs font-bold text-white font-mono"></p>
+      </div>
+      <div>
+        <label class="block text-xs text-gray-300 mb-1 font-bold">ALLOWED REQUESTS / MINUTE (RPM):</label>
+        <input type="number" id="modal-rpm-input" min="10" max="10000" step="10" class="w-full px-4 py-2.5 rounded-xl bg-black/60 border border-white/20 text-white font-mono text-sm focus:border-[var(--neon-cyan)] outline-none" />
+        <div class="flex items-center gap-2 mt-2">
+          <button onclick="document.getElementById('modal-rpm-input').value = 60" class="px-2 py-0.5 rounded bg-white/10 text-[10px] text-gray-300 hover:text-white">60</button>
+          <button onclick="document.getElementById('modal-rpm-input').value = 120" class="px-2 py-0.5 rounded bg-white/10 text-[10px] text-gray-300 hover:text-white">120 (Standard)</button>
+          <button onclick="document.getElementById('modal-rpm-input').value = 300" class="px-2 py-0.5 rounded bg-white/10 text-[10px] text-gray-300 hover:text-white">300 (Pro)</button>
+          <button onclick="document.getElementById('modal-rpm-input').value = 1000" class="px-2 py-0.5 rounded bg-white/10 text-[10px] text-gray-300 hover:text-white">1000 (VIP)</button>
+        </div>
+      </div>
+      <div class="flex items-center justify-end gap-3 pt-2">
+        <button onclick="window.closeRateModal()" class="px-4 py-2 rounded-xl text-xs text-gray-400 hover:text-white transition-all">CANCEL</button>
+        <button id="modal-save-rpm-btn" class="px-5 py-2 rounded-xl font-bold bg-[var(--neon-cyan)] text-black hover:bg-white text-xs transition-all flex items-center gap-1.5">
+          <span class="btn-text">SAVE LIMIT</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase Integration & Scripts -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js";
     import { getAuth, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-auth.js";
@@ -234,14 +359,78 @@ res = requests.get(
     const googleProvider = new GoogleAuthProvider();
     const ADMIN_EMAIL = "canwingamers@gmail.com".toLowerCase();
 
+    const preloader = document.getElementById("admin-preloader");
     const loginContainer = document.getElementById("login-container");
     const dashboardContainer = document.getElementById("dashboard-container");
     const authErrorBox = document.getElementById("auth-error-box");
     const userDisplay = document.getElementById("user-display");
     const logoutBtn = document.getElementById("logout-btn");
     const keysTbody = document.getElementById("keys-tbody");
+    const toastContainer = document.getElementById("toast-container");
 
     let currentAdminUser = null;
+    let currentEditingKeyId = null;
+
+    // Toast notification utility
+    window.showToast = function(title, msg = "", type = "success") {
+      const toast = document.createElement("div");
+      toast.className = `p-3.5 rounded-xl border backdrop-blur-md shadow-2xl transition-all duration-300 transform translate-y-2 pointer-events-auto flex items-start gap-3 ${
+        type === "success" ? "bg-[#0c1a12]/95 border-green-500/40 text-green-400" :
+        type === "error" ? "bg-[#1a0c0c]/95 border-red-500/40 text-red-400" :
+        "bg-[#0c141a]/95 border-[var(--neon-cyan)]/40 text-[var(--neon-cyan)]"
+      }`;
+      const icon = type === "success" ? "check-circle" : type === "error" ? "alert-triangle" : "info";
+      toast.innerHTML = `
+        <i data-feather="${icon}" class="w-4 h-4 mt-0.5 flex-shrink-0"></i>
+        <div class="flex-1 text-xs">
+          <div class="font-bold text-white">${escapeHtml(title)}</div>
+          ${msg ? `<div class="text-[11px] text-gray-300 mt-0.5">${escapeHtml(msg)}</div>` : ''}
+        </div>
+      `;
+      toastContainer.appendChild(toast);
+      feather.replace();
+      requestAnimationFrame(() => toast.classList.remove("translate-y-2"));
+      setTimeout(() => {
+        toast.classList.add("opacity-0", "translate-x-4");
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    };
+
+    function setBtnLoading(btn, isLoading, originalText = "") {
+      if (!btn) return;
+      btn.disabled = isLoading;
+      const textSpan = btn.querySelector(".btn-text");
+      const iconSpan = btn.querySelector(".btn-icon");
+      if (isLoading) {
+        if (textSpan) textSpan.dataset.orig = textSpan.textContent;
+        if (textSpan) textSpan.textContent = "PROCESSING...";
+        if (iconSpan) iconSpan.innerHTML = `<svg class="w-4 h-4 animate-spin text-current" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" stroke-opacity="0.25"></circle><path fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>`;
+      } else {
+        if (textSpan && textSpan.dataset.orig) textSpan.textContent = textSpan.dataset.orig;
+        feather.replace();
+      }
+    }
+
+    function renderSkeletons() {
+      keysTbody.innerHTML = Array(4).fill(0).map(() => `
+        <tr>
+          <td class="py-4 px-4"><div class="h-4 w-32 rounded skeleton"></div></td>
+          <td class="py-4 px-4"><div class="h-4 w-48 rounded skeleton"></div></td>
+          <td class="py-4 px-4"><div class="h-4 w-16 rounded skeleton"></div></td>
+          <td class="py-4 px-4"><div class="h-4 w-20 rounded skeleton"></div></td>
+          <td class="py-4 px-4"><div class="h-4 w-12 rounded skeleton"></div></td>
+          <td class="py-4 px-4"><div class="h-4 w-24 rounded skeleton"></div></td>
+          <td class="py-4 px-4 text-right"><div class="h-4 w-20 ml-auto rounded skeleton"></div></td>
+        </tr>
+      `).join("");
+    }
+
+    function hidePreloader() {
+      if (preloader) {
+        preloader.classList.add("opacity-0", "pointer-events-none");
+        setTimeout(() => preloader.style.display = "none", 500);
+      }
+    }
 
     function showError(msg) {
       authErrorBox.textContent = msg;
@@ -255,38 +444,43 @@ res = requests.get(
 
     // Verify Admin Email
     function verifyAdminAccess(user) {
-      if (!user || !user.email) {
-        return false;
-      }
+      if (!user || !user.email) return false;
       return user.email.toLowerCase() === ADMIN_EMAIL;
     }
 
     onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        if (verifyAdminAccess(user)) {
-          currentAdminUser = user;
-          clearError();
-          loginContainer.classList.add("hidden");
-          dashboardContainer.classList.remove("hidden");
-          userDisplay.textContent = `ADMIN: ${user.email}`;
-          userDisplay.classList.add("text-[var(--neon-yellow)]");
-          logoutBtn.classList.remove("hidden");
-          await loadKeys();
+      try {
+        if (user) {
+          if (verifyAdminAccess(user)) {
+            currentAdminUser = user;
+            clearError();
+            loginContainer.classList.add("hidden");
+            dashboardContainer.classList.remove("hidden");
+            userDisplay.textContent = `ADMIN: ${user.email}`;
+            userDisplay.classList.add("text-[var(--neon-yellow)]");
+            logoutBtn.classList.remove("hidden");
+            hidePreloader();
+            await loadKeys();
+          } else {
+            showError(`ACCESS DENIED: ${user.email} is not authorized. Only ${ADMIN_EMAIL} can access.`);
+            await signOut(auth);
+            currentAdminUser = null;
+            loginContainer.classList.remove("hidden");
+            dashboardContainer.classList.add("hidden");
+            userDisplay.textContent = "UNAUTHORIZED";
+            logoutBtn.classList.add("hidden");
+            hidePreloader();
+          }
         } else {
-          showError(`ACCESS DENIED: ${user.email} is not authorized. Only ${ADMIN_EMAIL} can access.`);
-          await signOut(auth);
           currentAdminUser = null;
           loginContainer.classList.remove("hidden");
           dashboardContainer.classList.add("hidden");
-          userDisplay.textContent = "UNAUTHORIZED";
+          userDisplay.textContent = "UNAUTHENTICATED";
           logoutBtn.classList.add("hidden");
+          hidePreloader();
         }
-      } else {
-        currentAdminUser = null;
-        loginContainer.classList.remove("hidden");
-        dashboardContainer.classList.add("hidden");
-        userDisplay.textContent = "UNAUTHENTICATED";
-        logoutBtn.classList.add("hidden");
+      } catch (err) {
+        hidePreloader();
       }
     });
 
@@ -294,40 +488,46 @@ res = requests.get(
     document.getElementById("login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       clearError();
+      const btn = document.getElementById("email-login-btn");
       const email = document.getElementById("admin-email").value.trim();
       const pass = document.getElementById("admin-password").value;
       if (email.toLowerCase() !== ADMIN_EMAIL) {
         showError(`Restricted: Only ${ADMIN_EMAIL} is allowed to log in.`);
         return;
       }
+      setBtnLoading(btn, true);
       try {
         await signInWithEmailAndPassword(auth, email, pass);
       } catch (err) {
         showError(err.message || "Failed to authenticate.");
+      } finally {
+        setBtnLoading(btn, false);
       }
     });
 
     // Google Login
     document.getElementById("google-login-btn").addEventListener("click", async () => {
       clearError();
+      const btn = document.getElementById("google-login-btn");
+      setBtnLoading(btn, true);
       try {
         await signInWithPopup(auth, googleProvider);
       } catch (err) {
         showError(err.message || "Google sign-in failed.");
+      } finally {
+        setBtnLoading(btn, false);
       }
     });
 
     // Logout
     logoutBtn.addEventListener("click", async () => {
       await signOut(auth);
+      window.showToast("Session Terminated", "You have been logged out of the admin gate.");
     });
 
     // API Keys Management
     async function getAuthHeaders() {
-      const headers = {
-        "Content-Type": "application/json",
-        "X-Admin-Email": ADMIN_EMAIL
-      };
+      const headers = { "Content-Type": "application/json" };
       if (currentAdminUser) {
         try {
           const idToken = await currentAdminUser.getIdToken();
@@ -338,23 +538,36 @@ res = requests.get(
     }
 
     async function loadKeys() {
+      renderSkeletons();
       try {
         const headers = await getAuthHeaders();
         const res = await fetch("/api/admin/keys", { headers });
         if (!res.ok) {
-          keysTbody.innerHTML = `<tr><td colspan="6" class="text-center py-6 text-red-400">Error loading keys: HTTP ${res.status}</td></tr>`;
+          keysTbody.innerHTML = `<tr><td colspan="7" class="text-center py-6 text-red-400">Error loading keys: HTTP ${res.status}</td></tr>`;
           return;
         }
         const data = await res.json();
         const keys = data.keys || [];
         const stats = data.stats || {};
+        const settings = data.settings || {};
 
         document.getElementById("stat-total-keys").textContent = stats.total_keys || keys.length;
         document.getElementById("stat-active-keys").textContent = stats.active_keys || 0;
         document.getElementById("stat-total-requests").textContent = (stats.total_requests || 0).toLocaleString();
+        document.getElementById("keys-count-badge").textContent = `${keys.length} KEYS REGISTERED`;
+
+        // Update settings inputs
+        if (settings.default_api_rate_limit) {
+          document.getElementById("setting-default-rpm").value = settings.default_api_rate_limit;
+          document.getElementById("display-default-rpm").textContent = `${settings.default_api_rate_limit} RPM`;
+        }
+        if (settings.admin_rate_limit) {
+          document.getElementById("setting-admin-rpm").value = settings.admin_rate_limit;
+          document.getElementById("display-admin-rpm").textContent = `${settings.admin_rate_limit} RPM`;
+        }
 
         if (keys.length === 0) {
-          keysTbody.innerHTML = `<tr><td colspan="6" class="text-center py-8 text-gray-500">No API keys registered yet. Click Generate Key above.</td></tr>`;
+          keysTbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-gray-500">No API keys registered yet. Click Generate Key above.</td></tr>`;
           return;
         }
 
@@ -362,6 +575,7 @@ res = requests.get(
           const isActive = k.status === "active";
           const lastUsed = k.last_used_at ? new Date(k.last_used_at).toLocaleString() : "Never";
           const masked = k.key ? `${k.key.substring(0, 14)}••••••••${k.key.slice(-4)}` : "••••";
+          const rpm = k.rate_limit || 120;
           return `
             <tr class="hover:bg-white/[0.02] transition-all">
               <td class="py-4 px-4 font-bold text-white">${escapeHtml(k.name || "Unnamed")}</td>
@@ -378,7 +592,13 @@ res = requests.get(
                   ${isActive ? 'ACTIVE' : 'REVOKED'}
                 </span>
               </td>
-              <td class="py-4 px-4 font-bold text-[var(--neon-cyan)]">${(k.requests_count || 0).toLocaleString()}</td>
+              <td class="py-4 px-4">
+                <button onclick="window.openRateModal('${k.id}', '${escapeHtml(k.name || "Unnamed")}', ${rpm})" class="px-2.5 py-1 rounded bg-[rgba(0,245,255,0.08)] border border-[var(--neon-cyan)]/30 hover:border-[var(--neon-cyan)] text-[var(--neon-cyan)] text-[11px] font-bold flex items-center gap-1.5 transition-all">
+                  <span>${rpm} RPM</span>
+                  <i data-feather="edit-2" class="w-3 h-3"></i>
+                </button>
+              </td>
+              <td class="py-4 px-4 font-bold text-[var(--neon-yellow)]">${(k.requests_count || 0).toLocaleString()}</td>
               <td class="py-4 px-4 text-gray-400 text-[11px]">${lastUsed}</td>
               <td class="py-4 px-4 text-right">
                 <div class="inline-flex items-center gap-2">
@@ -393,29 +613,31 @@ res = requests.get(
             </tr>
           `;
         }).join("");
+        feather.replace();
 
       } catch (err) {
-        keysTbody.innerHTML = `<tr><td colspan="6" class="text-center py-6 text-red-400">Error: ${err.message}</td></tr>`;
+        keysTbody.innerHTML = `<tr><td colspan="7" class="text-center py-6 text-red-400">Error: ${err.message}</td></tr>`;
       }
     }
 
     window.copyKey = function(keyText) {
       navigator.clipboard.writeText(keyText);
-      alert("API Key copied to clipboard!");
+      window.showToast("Key Copied!", "API key copied to clipboard.");
     };
 
     window.toggleKey = async function(keyId, newStatus) {
-      if (!confirm(`Are you sure you want to change this key status to ${newStatus}?`)) return;
+      if (!confirm(`Are you sure you want to change this key status to ${newStatus.toUpperCase()}?`)) return;
       const headers = await getAuthHeaders();
       const res = await fetch("/api/admin/keys/toggle", {
         method: "POST",
         headers,
-        body: JSON.stringify({ id: keyId, status: newStatus, admin_email: ADMIN_EMAIL })
+        body: JSON.stringify({ id: keyId, status: newStatus })
       });
       if (res.ok) {
+        window.showToast("Status Updated", `Key has been ${newStatus}.`);
         await loadKeys();
       } else {
-        alert("Failed to update key status.");
+        window.showToast("Update Failed", "Could not toggle key status.", "error");
       }
     };
 
@@ -425,29 +647,110 @@ res = requests.get(
       const res = await fetch("/api/admin/keys/delete", {
         method: "POST",
         headers,
-        body: JSON.stringify({ id: keyId, admin_email: ADMIN_EMAIL })
+        body: JSON.stringify({ id: keyId })
       });
       if (res.ok) {
+        window.showToast("Key Deleted", "API key permanently removed.", "success");
         await loadKeys();
       } else {
-        alert("Failed to delete key.");
+        window.showToast("Delete Failed", "Could not delete key.", "error");
       }
     };
 
+    // Rate Limit Modal Functions
+    window.openRateModal = function(keyId, keyName, currentRpm) {
+      currentEditingKeyId = keyId;
+      document.getElementById("modal-key-name").textContent = keyName;
+      document.getElementById("modal-rpm-input").value = currentRpm || 120;
+      document.getElementById("rate-modal").classList.remove("hidden");
+    };
+
+    window.closeRateModal = function() {
+      currentEditingKeyId = null;
+      document.getElementById("rate-modal").classList.add("hidden");
+    };
+
+    document.getElementById("modal-save-rpm-btn").addEventListener("click", async () => {
+      if (!currentEditingKeyId) return;
+      const btn = document.getElementById("modal-save-rpm-btn");
+      const rpm = parseInt(document.getElementById("modal-rpm-input").value) || 120;
+      setBtnLoading(btn, true);
+      try {
+        const headers = await getAuthHeaders();
+        const res = await fetch("/api/admin/keys/rate-limit", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ id: currentEditingKeyId, rate_limit: rpm })
+        });
+        if (res.ok) {
+          window.showToast("Rate Limit Configured", `Updated quota to ${rpm} requests/minute.`);
+          window.closeRateModal();
+          await loadKeys();
+        } else {
+          window.showToast("Update Failed", "Could not update key rate limit.", "error");
+        }
+      } catch (err) {
+        window.showToast("Error", err.message, "error");
+      } finally {
+        setBtnLoading(btn, false);
+      }
+    });
+
+    // Create Key
     document.getElementById("create-key-btn").addEventListener("click", async () => {
+      const btn = document.getElementById("create-key-btn");
       const nameInput = document.getElementById("new-key-name");
+      const rpmInput = document.getElementById("new-key-rpm");
       const name = nameInput.value.trim() || "New Client Key";
-      const headers = await getAuthHeaders();
-      const res = await fetch("/api/admin/keys/create", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ name, admin_email: ADMIN_EMAIL })
-      });
-      if (res.ok) {
-        nameInput.value = "";
-        await loadKeys();
-      } else {
-        alert("Failed to create key.");
+      const rpm = parseInt(rpmInput.value) || 120;
+
+      setBtnLoading(btn, true);
+      try {
+        const headers = await getAuthHeaders();
+        const res = await fetch("/api/admin/keys/create", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ name, rate_limit: rpm })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          nameInput.value = "";
+          window.showToast("API Key Generated", `Created key for "${name}" with ${rpm} RPM.`);
+          await loadKeys();
+        } else {
+          window.showToast("Creation Failed", "Could not create new API key.", "error");
+        }
+      } catch (err) {
+        window.showToast("Error", err.message, "error");
+      } finally {
+        setBtnLoading(btn, false);
+      }
+    });
+
+    // Global Rate Limits Save
+    document.getElementById("save-settings-btn").addEventListener("click", async () => {
+      const btn = document.getElementById("save-settings-btn");
+      const defRpm = parseInt(document.getElementById("setting-default-rpm").value) || 120;
+      const adminRpm = parseInt(document.getElementById("setting-admin-rpm").value) || 15;
+      setBtnLoading(btn, true);
+      try {
+        const headers = await getAuthHeaders();
+        const res = await fetch("/api/admin/settings", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ default_api_rate_limit: defRpm, admin_rate_limit: adminRpm })
+        });
+        if (res.ok) {
+          document.getElementById("display-default-rpm").textContent = `${defRpm} RPM`;
+          document.getElementById("display-admin-rpm").textContent = `${adminRpm} RPM`;
+          window.showToast("System Limits Applied", `Default API: ${defRpm} RPM | Admin: ${adminRpm} RPM.`);
+        } else {
+          window.showToast("Failed", "Could not update global rate limits.", "error");
+        }
+      } catch (err) {
+        window.showToast("Error", err.message, "error");
+      } finally {
+        setBtnLoading(btn, false);
       }
     });
 
